@@ -68,11 +68,12 @@ report(agent="custom", session_id="gold-etl", status="working",
        project="gold-dashboard")
 # ...later...
 report(agent="custom", session_id="gold-etl", status="completed",
-       summary="Loaded 1,204 rows")
+       summary="Loaded 1,204 rows", tokens_in=52000, tokens_out=8100)
 ```
 
 Accepted `status` values: `working`, `waiting_input`, `idle`, `error`,
-`completed`. Only `agent` and `session_id` are required.
+`completed`. Only `agent` and `session_id` are required. Optional `tokens_in`
+/ `tokens_out` feed the cost tracker.
 
 ---
 
@@ -121,6 +122,27 @@ permanently. Only an explicit Deny stops an action.
 
 ---
 
+## History, tokens & cost
+
+The **History** button in the header shows a per-day digest of the last 30
+days: events, tool calls, completions, tokens, and an estimated cost. The
+"Tokens today" tile shows the running total.
+
+Token usage is collected automatically from Claude Code transcripts and Codex
+rollout logs (beta), and from custom bots that report `tokens_in`/`tokens_out`
+on `/ingest`. Costs are **estimates** from the static `PRICES` table at the
+top of `app.py` (USD per MTok, substring-matched on model name) — edit it when
+prices change. Cache discounts are not modeled; unknown models show tokens
+without a cost.
+
+## Retention
+
+Raw events older than 14 days are rolled up into per-day aggregates (so
+History keeps working) and deleted; decisions and ended sessions are pruned
+after 30 days. `EVENTS_RETAIN_DAYS` / `SESSIONS_RETAIN_DAYS` in `app.py`.
+
+---
+
 ## Menu bar (optional)
 
 `scripts/amc.5s.sh` is a SwiftBar/xbar plugin. Install
@@ -141,6 +163,7 @@ too, so nothing here needs to change for it.
 | `GET /api/state` | Full state snapshot (also the polling fallback) |
 | `GET /api/session/{id}/events` | One session's full timeline |
 | `GET /api/daily` | Events per day per agent, last 7 days (feeds the 7-day panel) |
+| `GET /api/history?days=30` | Per-day digest: events, tool calls, tokens, est. cost |
 | `GET /summary` | Compact counts for menu bar / notch |
 | `WS /ws` | Live push |
 | `POST /ingest` | Generic webhook |

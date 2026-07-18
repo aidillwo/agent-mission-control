@@ -34,6 +34,29 @@ IDLE_S = 600            # 30s..10min = idle, beyond = ended
 WAITING_TTL_S = 7200    # waiting_input stays visible this long before ended
 GATE_TIMEOUT_S = 120    # how long a gated hook waits for an allow/deny click
 EVENT_FEED_LIMIT = 300
+EVENTS_RETAIN_DAYS = 14   # raw events older than this are rolled up then pruned
+SESSIONS_RETAIN_DAYS = 30 # ended sessions / decisions older than this are pruned
+
+# USD per MTok (input, output), substring-matched against the model name.
+# Estimates only (cache discounts not modeled). Edit as prices change.
+PRICES = [
+    ("fable", (10, 50)),
+    ("opus", (5, 25)),
+    ("sonnet", (3, 15)),
+    ("haiku", (1, 5)),
+    ("gpt-5", (1.25, 10)),
+]
+
+def est_cost(model, tin, tout):
+    """Estimated USD cost for a token count, or None for unknown models."""
+    m = (model or "").lower()
+    for key, (pin, pout) in PRICES:
+        if key in m:
+            return tin / 1e6 * pin + tout / 1e6 * pout
+    return None
+
+def local_day(ts=None):
+    return datetime.datetime.fromtimestamp(ts or time.time()).strftime("%Y-%m-%d")
 
 # ---------------------------------------------------------------- db
 
@@ -65,6 +88,17 @@ def init_db():
           session_id TEXT, tool TEXT, summary TEXT, detail TEXT,
           status TEXT DEFAULT 'pending',
           created_at REAL, decided_at REAL
+        );
+        CREATE TABLE IF NOT EXISTS daily_usage(
+          day TEXT, agent TEXT, model TEXT,
+          tokens_in INTEGER DEFAULT 0, tokens_out INTEGER DEFAULT 0,
+          PRIMARY KEY(day, agent, model)
+        );
+        CREATE TABLE IF NOT EXISTS daily_rollup(
+          day TEXT, agent TEXT,
+          events INTEGER DEFAULT 0, tool_calls INTEGER DEFAULT 0,
+          completed INTEGER DEFAULT 0,
+          PRIMARY KEY(day, agent)
         );
         CREATE INDEX IF NOT EXISTS ev_sid ON events(session_id, ts);
         CREATE INDEX IF NOT EXISTS ev_ts ON events(ts);
@@ -105,6 +139,17 @@ def add_event(sid, kind, summary, detail=None, ts=None, decision_id=None):
             " VALUES(?,?,?,?,?,?)",
             (sid, ts, kind, (summary or "")[:300],
              json.dumps(detail)[:4000] if detail else None, decision_id))
+
+def add_usage(agent, model, tin, tout):
+    if not (tin or tout):
+        return
+    with db() as c:
+        c.execute(
+            "INSERT INTO daily_usage(day,agent,model,tokens_in,tokens_out) "
+            "VALUES(?,?,?,?,?) ON CONFLICT(day,agent,model) DO UPDATE SET "
+            "tokens_in=tokens_in+excluded.tokens_in, "
+            "tokens_out=tokens_out+excluded.tokens_out",
+            (local_day(), agent, model or "unknown", int(tin or 0), int(tout or 0)))
 
 def derive_statuses():
     """Recompute working/idle/ended from last_seen. waiting_input and error are
@@ -149,11 +194,20 @@ def state_payload():
             "SELECT COUNT(*) n, SUM(kind='tool_use') tools, "
             "SUM(kind='completed') done FROM events WHERE ts>=?",
             (day_start,)).fetchone()
+        usage_rows = c.execute(
+            "SELECT model, SUM(tokens_in) i, SUM(tokens_out) o FROM daily_usage "
+            "WHERE day=? GROUP BY model", (local_day(),)).fetchall()
+    tin = sum(r["i"] or 0 for r in usage_rows)
+    tout = sum(r["o"] or 0 for r in usage_rows)
+    costs = [est_cost(r["model"], r["i"] or 0, r["o"] or 0) for r in usage_rows]
+    known = [x for x in costs if x is not None]
     return {"type": "state", "now": time.time(),
             "sessions": sessions, "events": events, "decisions": decisions,
             "today": {"events": today["n"] or 0,
                       "tool_calls": today["tools"] or 0,
-                      "completed": today["done"] or 0}}
+                      "completed": today["done"] or 0},
+            "usage_today": {"tokens_in": tin, "tokens_out": tout,
+                            "est_cost": round(sum(known), 4) if known else None}}
 
 # ---------------------------------------------------------------- ws hub
 
@@ -206,6 +260,7 @@ async def handle_generic(p):
                    cwd=p.get("cwd"), status=status, task=p.get("task"))
     add_event(sid, kind, p.get("summary") or p.get("task") or status or "ping",
               detail=p, decision_id=p.get("awaiting_decision_id"))
+    add_usage(agent, p.get("model"), p.get("tokens_in"), p.get("tokens_out"))
     await hub.broadcast()
 
 async def handle_claude_code(event, p):
@@ -325,6 +380,81 @@ async def handle_codex_notify(p):
         upsert_session(sid, "codex")
         add_event(sid, "status_change", ntype or "notify", p)
     await hub.broadcast()
+
+# ---------------------------------------------------------------- history
+
+def history_days(days=30):
+    """Per-day digest merging live event counts (recent) with daily_rollup
+    (pruned days) and daily_usage tokens/cost."""
+    out = {}
+    with db() as c:
+        for r in c.execute(
+                "SELECT date(e.ts,'unixepoch','localtime') d, s.agent_type agent, "
+                "COUNT(*) n, SUM(e.kind='tool_use') tools, "
+                "SUM(e.kind='completed') done FROM events e "
+                "LEFT JOIN sessions s ON s.session_id=e.session_id "
+                "GROUP BY d, agent"):
+            day = out.setdefault(r["d"], {"events": 0, "tool_calls": 0,
+                                          "completed": 0, "agents": set()})
+            day["events"] += r["n"] or 0
+            day["tool_calls"] += r["tools"] or 0
+            day["completed"] += r["done"] or 0
+            if r["agent"]:
+                day["agents"].add(r["agent"])
+        for r in c.execute("SELECT * FROM daily_rollup"):
+            day = out.setdefault(r["day"], {"events": 0, "tool_calls": 0,
+                                            "completed": 0, "agents": set()})
+            day["events"] += r["events"] or 0
+            day["tool_calls"] += r["tool_calls"] or 0
+            day["completed"] += r["completed"] or 0
+            day["agents"].add(r["agent"])
+        usage = {}
+        for r in c.execute("SELECT day, model, SUM(tokens_in) i, "
+                           "SUM(tokens_out) o FROM daily_usage GROUP BY day, model"):
+            u = usage.setdefault(r["day"], {"in": 0, "out": 0, "costs": []})
+            u["in"] += r["i"] or 0
+            u["out"] += r["o"] or 0
+            cost = est_cost(r["model"], r["i"] or 0, r["o"] or 0)
+            if cost is not None:
+                u["costs"].append(cost)
+    cutoff = local_day(time.time() - days * 86400)
+    result = []
+    for day in sorted(set(out) | set(usage), reverse=True):
+        if day < cutoff:
+            continue
+        d = out.get(day, {"events": 0, "tool_calls": 0, "completed": 0,
+                          "agents": set()})
+        u = usage.get(day, {"in": 0, "out": 0, "costs": []})
+        result.append({
+            "day": day, "events": d["events"], "tool_calls": d["tool_calls"],
+            "completed": d["completed"], "agents": sorted(d["agents"]),
+            "tokens_in": u["in"], "tokens_out": u["out"],
+            "est_cost": round(sum(u["costs"]), 4) if u["costs"] else None})
+    return result
+
+def rollup_and_prune():
+    """Aggregate events older than EVENTS_RETAIN_DAYS into daily_rollup, then
+    delete them; prune old decisions and long-ended sessions."""
+    ev_cutoff = time.time() - EVENTS_RETAIN_DAYS * 86400
+    sess_cutoff = time.time() - SESSIONS_RETAIN_DAYS * 86400
+    with db() as c:
+        for r in c.execute(
+                "SELECT date(e.ts,'unixepoch','localtime') d, "
+                "COALESCE(s.agent_type,'unknown') agent, COUNT(*) n, "
+                "SUM(e.kind='tool_use') tools, SUM(e.kind='completed') done "
+                "FROM events e LEFT JOIN sessions s ON s.session_id=e.session_id "
+                "WHERE e.ts < ? GROUP BY d, agent", (ev_cutoff,)).fetchall():
+            c.execute(
+                "INSERT INTO daily_rollup(day,agent,events,tool_calls,completed) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(day,agent) DO UPDATE SET "
+                "events=events+excluded.events, "
+                "tool_calls=tool_calls+excluded.tool_calls, "
+                "completed=completed+excluded.completed",
+                (r["d"], r["agent"], r["n"] or 0, r["tools"] or 0, r["done"] or 0))
+        c.execute("DELETE FROM events WHERE ts < ?", (ev_cutoff,))
+        c.execute("DELETE FROM decisions WHERE created_at < ?", (sess_cutoff,))
+        c.execute("DELETE FROM sessions WHERE status='ended' AND "
+                  "last_seen_at < ?", (sess_cutoff,))
 
 # ---------------------------------------------------------------- gating
 
@@ -505,12 +635,21 @@ def claude_line(path, obj):
     elif t == "assistant":
         model = msg.get("model")
         upsert_session(sid, "claude-code", cwd=cwd, model=model, status="working")
+        # usage: streaming writes several lines per message with the same
+        # usage repeated — count each message id once
+        usage = msg.get("usage") or {}
+        mid = msg.get("id")
+        if usage and mid and claude_line.last_usage_id.get(path) != mid:
+            claude_line.last_usage_id[path] = mid
+            add_usage("claude-code", model,
+                      usage.get("input_tokens"), usage.get("output_tokens"))
         for b in msg.get("content") or []:
             if isinstance(b, dict) and b.get("type") == "tool_use":
                 ti = b.get("input") or {}
                 target = ti.get("file_path") or ti.get("command") or ""
                 add_event(sid, "tool_use",
                           f"{b.get('name','tool')} {txt(target,120)}".strip())
+claude_line.last_usage_id = {}
 
 def codex_line(path, obj):
     payload = obj.get("payload") or {}
@@ -539,7 +678,20 @@ def codex_line(path, obj):
             name = payload.get("name") or pt
             upsert_session(sid, "codex", status="working")
             add_event(sid, "tool_use", txt(name, 140))
+    elif t == "event_msg" and (payload.get("type") == "token_count"):
+        # cumulative totals per session; store the delta since last seen (beta,
+        # wired defensively against Codex's documented rollout shape)
+        info = payload.get("info") or {}
+        tot = info.get("total_token_usage") or info
+        tin, tout = tot.get("input_tokens"), tot.get("output_tokens")
+        if isinstance(tin, (int, float)) or isinstance(tout, (int, float)):
+            prev = codex_line.last_usage.get(path, (0, 0))
+            d_in = max(0, int(tin or 0) - prev[0])
+            d_out = max(0, int(tout or 0) - prev[1])
+            codex_line.last_usage[path] = (int(tin or 0), int(tout or 0))
+            add_usage("codex", info.get("model") or "codex", d_in, d_out)
 codex_line.last_sid = {}
+codex_line.last_usage = {}
 
 async def process_scan():
     try:
@@ -587,9 +739,17 @@ async def lifespan(app):
         t.cancel()
 
 async def reaper():
+    last_prune_day = None
     while True:
         if derive_statuses():
             await hub.broadcast()
+        today = local_day()
+        if today != last_prune_day:
+            last_prune_day = today
+            try:
+                rollup_and_prune()
+            except Exception:
+                pass
         await asyncio.sleep(5)
 
 app = FastAPI(lifespan=lifespan)
@@ -659,6 +819,10 @@ def api_session_events(sid: str):
             "SELECT ts,kind,summary,detail FROM events WHERE session_id=? "
             "ORDER BY ts DESC LIMIT 200", (sid,))]
     return {"session_id": sid, "events": rows}
+
+@app.get("/api/history")
+def api_history(days: int = 30):
+    return {"days": history_days(min(max(days, 1), 365))}
 
 @app.get("/api/daily")
 def api_daily():

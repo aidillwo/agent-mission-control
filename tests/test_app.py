@@ -289,6 +289,115 @@ def test_cursor_gate_sid_and_summary(fresh_db):
     assert "npm run deploy" in summary
 
 
+# ---------------------------------------------------------------- usage & history
+
+def test_est_cost_matching():
+    assert amc.est_cost("claude-opus-4-8", 1_000_000, 0) == 5
+    assert amc.est_cost("claude-sonnet-5", 0, 1_000_000) == 15
+    assert amc.est_cost("gpt-5-codex", 1_000_000, 0) == 1.25
+    assert amc.est_cost("mystery-model-9", 500, 500) is None
+
+
+def test_add_usage_accumulates(fresh_db):
+    amc.add_usage("claude-code", "claude-opus-4-8", 100, 50)
+    amc.add_usage("claude-code", "claude-opus-4-8", 10, 5)
+    payload = amc.state_payload()
+    assert payload["usage_today"]["tokens_in"] == 110
+    assert payload["usage_today"]["tokens_out"] == 55
+    assert payload["usage_today"]["est_cost"] is not None
+
+
+def test_claude_line_usage_dedupes_by_message_id(fresh_db):
+    amc.claude_line.last_usage_id.clear()
+    line = {"sessionId": "u1", "type": "assistant",
+            "message": {"id": "msg_1", "model": "claude-opus-4-8",
+                        "usage": {"input_tokens": 100, "output_tokens": 20},
+                        "content": []}}
+    amc.claude_line("/fake/a.jsonl", line)
+    amc.claude_line("/fake/a.jsonl", line)  # streaming repeat, same id
+    line2 = dict(line, message=dict(line["message"], id="msg_2"))
+    amc.claude_line("/fake/a.jsonl", line2)
+    p = amc.state_payload()
+    assert p["usage_today"]["tokens_in"] == 200  # msg_1 once + msg_2 once
+
+
+def test_codex_usage_stores_delta(fresh_db):
+    amc.codex_line.last_usage.clear()
+    amc.codex_line.last_sid.clear()
+    def tc(tin, tout):
+        return {"type": "event_msg",
+                "payload": {"type": "token_count",
+                            "info": {"total_token_usage":
+                                     {"input_tokens": tin, "output_tokens": tout}}}}
+    amc.codex_line("/fake/r.jsonl", tc(1000, 100))
+    amc.codex_line("/fake/r.jsonl", tc(1500, 180))  # cumulative totals
+    p = amc.state_payload()
+    assert p["usage_today"]["tokens_in"] == 1500
+    assert p["usage_today"]["tokens_out"] == 180
+
+
+def test_generic_webhook_tokens(fresh_db):
+    run(amc.handle_generic({"agent": "custom", "session_id": "t1",
+                            "status": "working", "model": "claude-haiku-4-5",
+                            "tokens_in": 5000, "tokens_out": 800}))
+    p = amc.state_payload()
+    assert p["usage_today"]["tokens_in"] == 5000
+
+
+def test_rollup_and_prune(fresh_db):
+    now = time.time()
+    old = now - (amc.EVENTS_RETAIN_DAYS + 2) * 86400
+    very_old = now - (amc.SESSIONS_RETAIN_DAYS + 2) * 86400
+    amc.upsert_session("live", "claude-code", status="working", ts=now)
+    amc.upsert_session("dead", "claude-code", status="working", ts=very_old)
+    with amc.db() as c:
+        c.execute("UPDATE sessions SET status='ended' WHERE session_id='dead'")
+    amc.add_event("live", "tool_use", "recent", ts=now)
+    amc.add_event("dead", "tool_use", "ancient1", ts=old)
+    amc.add_event("dead", "completed", "ancient2", ts=old)
+    with amc.db() as c:
+        c.execute("INSERT INTO decisions(session_id,tool,summary,status,created_at)"
+                  " VALUES('dead','Bash','x','expired',?)", (very_old,))
+
+    amc.rollup_and_prune()
+
+    with amc.db() as c:
+        ev = [r["summary"] for r in c.execute("SELECT summary FROM events")]
+        roll = [dict(r) for r in c.execute("SELECT * FROM daily_rollup")]
+        sess = [r["session_id"] for r in c.execute("SELECT session_id FROM sessions")]
+        dec = c.execute("SELECT COUNT(*) n FROM decisions").fetchone()["n"]
+    assert ev == ["recent"]                      # old events pruned
+    assert roll and roll[0]["events"] == 2       # ...but rolled up first
+    assert roll[0]["tool_calls"] == 1 and roll[0]["completed"] == 1
+    assert sess == ["live"]                      # stale ended session pruned
+    assert dec == 0                              # old decision pruned
+
+
+def test_history_merges_live_and_rollup(fresh_db):
+    now = time.time()
+    amc.upsert_session("h1", "claude-code", status="working", ts=now)
+    amc.add_event("h1", "tool_use", "today-event", ts=now)
+    amc.add_usage("claude-code", "claude-opus-4-8", 1000, 100)
+    old_day = amc.local_day(now - 5 * 86400)
+    with amc.db() as c:
+        c.execute("INSERT INTO daily_rollup(day,agent,events,tool_calls,completed)"
+                  " VALUES(?,?,?,?,?)", (old_day, "codex", 40, 30, 3))
+    days = amc.history_days(30)
+    by_day = {d["day"]: d for d in days}
+    assert by_day[amc.local_day()]["tool_calls"] == 1
+    assert by_day[amc.local_day()]["tokens_in"] == 1000
+    assert by_day[amc.local_day()]["est_cost"] is not None
+    assert by_day[old_day]["events"] == 40
+    assert "codex" in by_day[old_day]["agents"]
+
+
+def test_history_endpoint(fresh_db):
+    client = TestClient(amc.app)
+    amc.add_usage("custom", "claude-haiku-4-5", 10, 5)
+    r = client.get("/api/history?days=7").json()
+    assert r["days"] and r["days"][0]["tokens_in"] == 10
+
+
 # ---------------------------------------------------------------- endpoints
 
 @pytest.fixture()

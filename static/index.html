@@ -63,6 +63,7 @@ h1{font-family:var(--display);font-weight:700;font-size:1.35rem;letter-spacing:-
 .t-wait.hot{animation:throb 1.4s ease-in-out infinite}
 .t-done{background:var(--lime)}
 .t-tools{background:var(--teal-soft)}
+.t-usage{background:var(--lav-soft)}
 @keyframes throb{0%,100%{box-shadow:var(--shadow)}50%{box-shadow:4px 4px 0 var(--ink),0 0 0 7px rgba(255,138,0,.35)}}
 
 /* filters */
@@ -198,6 +199,16 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
 .tl li.k-error::before{background:var(--coral)}
 .tl .t{font-family:var(--mono);font-size:.66rem;opacity:.6}
 .tl .s{font-size:.84rem}
+
+/* history table */
+.hist{width:100%;border-collapse:collapse;margin-top:14px;font-size:.8rem}
+.hist th{font-family:var(--mono);font-size:.62rem;text-transform:uppercase;
+  letter-spacing:.07em;text-align:right;padding:6px 4px;border-bottom:2px solid var(--ink)}
+.hist th:first-child,.hist td:first-child{text-align:left}
+.hist td{text-align:right;padding:6px 4px;border-bottom:1px dashed rgba(23,32,59,.18);
+  font-family:var(--mono);font-size:.74rem}
+.hist td:first-child{font-family:var(--body);font-weight:600;font-size:.78rem}
+.hist .cost{color:var(--lime-deep);font-weight:700}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
@@ -210,6 +221,9 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
   <span id="conn" class="conn off">connecting</span>
   <div class="spacer"></div>
   <span id="clock" class="clock"></span>
+  <button id="histBtn" class="bell" title="Daily digest of the last 30 days">
+    <span id="histIcon"></span><span>History</span>
+  </button>
   <button id="bell" class="bell" aria-pressed="false" title="One click mutes all notifications">
     <span id="bellIcon"></span><span id="bellText">Notifications on</span>
   </button>
@@ -224,6 +238,8 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
     <div class="num" id="nDone">0</div><div class="sub">finished turns and sessions</div></div>
   <div class="tile t-tools"><div class="lbl">Tool calls today</div>
     <div class="num" id="nTools">0</div><div class="sub">edits, commands, searches</div></div>
+  <div class="tile t-usage"><div class="lbl">Tokens today</div>
+    <div class="num" id="nTokens">0</div><div class="sub" id="nCost">estimates from PRICES in app.py</div></div>
 </section>
 
 <div class="filters" id="filters" role="group" aria-label="Filter sessions">
@@ -256,6 +272,15 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
 </div>
 
 <div class="overlay" id="overlay"></div>
+<aside class="drawer" id="histDrawer" aria-label="History">
+  <button class="close" id="histClose" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  <h3>History</h3>
+  <div class="model">last 30 days · costs are estimates</div>
+  <table class="hist" id="histTable">
+    <thead><tr><th>Day</th><th>Events</th><th>Tools</th><th>Done</th><th>Tokens</th><th>Est&nbsp;cost</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</aside>
 <aside class="drawer" id="drawer" aria-label="Session detail">
   <button class="close" id="drawerClose" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
   <h3 id="dTitle"></h3>
@@ -274,6 +299,7 @@ const ICONS={
   bell:icon('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
   bellOff:icon('<path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5"/><path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/>'),
   clock:icon('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
+  history:icon('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>'),
   shield:icon('<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>'),
   check:icon('<path d="M20 6 9 17l-5-5"/>'),
   x:icon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
@@ -333,6 +359,11 @@ function ago(sec){
   if(sec<3600)return Math.floor(sec/60)+'m';
   return Math.floor(sec/3600)+'h '+Math.floor(sec%3600/60)+'m';
 }
+function fmtTokens(n){
+  if(n>=1e6)return (n/1e6).toFixed(1)+'M';
+  if(n>=1e3)return (n/1e3).toFixed(n>=1e5?0:1)+'k';
+  return String(n);
+}
 function spark(events,sid,now){
   const buckets=new Array(20).fill(0);
   for(const e of events){ if(e.session_id!==sid)continue;
@@ -356,6 +387,11 @@ function render(){
   $('#tileWait').classList.toggle('hot',waiting.length>0);
   $('#nDone').textContent=state.today.completed;
   $('#nTools').textContent=state.today.tool_calls;
+  const u=state.usage_today||{tokens_in:0,tokens_out:0,est_cost:null};
+  $('#nTokens').textContent=fmtTokens(u.tokens_in+u.tokens_out);
+  $('#nCost').textContent=u.est_cost!=null
+    ?`≈ $${u.est_cost.toFixed(2)} est · ${fmtTokens(u.tokens_in)} in / ${fmtTokens(u.tokens_out)} out`
+    :(u.tokens_in+u.tokens_out>0?'no price data for these models':'in + out, all agents');
 
   /* filter chips */
   const agents=[...new Set(S.map(s=>s.agent_type))]
@@ -473,10 +509,30 @@ loadDaily(); setInterval(loadDaily,60000);
 function notify(s){
   if(muted||!('Notification' in window))return;
   if(Notification.permission!=='granted')return;
-  new Notification(s.status==='error'?'Agent hit an error':'Agent needs your input',
+  const n=new Notification(s.status==='error'?'Agent hit an error':'Agent needs your input',
     {body:`${s.agent_type} · ${s.project||s.session_id}\n${s.current_task||''}`,
      tag:s.session_id});
+  n.onclick=()=>{window.focus();n.close();};
 }
+
+/* ---------- history drawer ---------- */
+$('#histIcon').innerHTML=ICONS.history;
+async function openHistory(){
+  $('#overlay').classList.add('open');$('#histDrawer').classList.add('open');
+  const tb=$('#histTable tbody');
+  tb.innerHTML='<tr><td colspan="6">Loading…</td></tr>';
+  try{
+    const {days}=await fetch('/api/history?days=30').then(r=>r.json());
+    tb.innerHTML=days.map(d=>`<tr>
+      <td title="${esc((d.agents||[]).join(', '))}">${esc(d.day)}</td>
+      <td>${d.events}</td><td>${d.tool_calls}</td><td>${d.completed}</td>
+      <td>${fmtTokens(d.tokens_in+d.tokens_out)}</td>
+      <td class="cost">${d.est_cost!=null?'$'+d.est_cost.toFixed(2):'—'}</td>
+    </tr>`).join('')||'<tr><td colspan="6">No history yet.</td></tr>';
+  }catch(e){tb.innerHTML='<tr><td colspan="6">Failed to load.</td></tr>';}
+}
+$('#histBtn').onclick=openHistory;
+$('#histClose').onclick=()=>{$('#overlay').classList.remove('open');$('#histDrawer').classList.remove('open')};
 
 /* ---------- interactions ---------- */
 $('#filters').onclick=e=>{
@@ -516,7 +572,8 @@ $('#grid').addEventListener('keydown',e=>{
   if((e.key==='Enter'||e.key===' ')&&e.target.classList.contains('card')){
     e.preventDefault();e.target.click();}
 });
-function closeDrawer(){$('#overlay').classList.remove('open');$('#drawer').classList.remove('open')}
+function closeDrawer(){$('#overlay').classList.remove('open');
+  $('#drawer').classList.remove('open');$('#histDrawer').classList.remove('open')}
 $('#overlay').onclick=closeDrawer;
 $('#drawerClose').onclick=closeDrawer;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
