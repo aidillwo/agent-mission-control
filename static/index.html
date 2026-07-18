@@ -266,7 +266,7 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
 <script>
 const $=s=>document.querySelector(s);
 let state=null, muted=localStorage.getItem('amc_muted')==='1';
-let agentSel=new Set(), statusSel=new Set(), prevStatus={};
+let agentSel=new Set(), statusSel=new Set(['active']), prevStatus={};
 
 /* Lucide icons (lucide.dev, ISC) inlined so everything stays offline */
 const icon=p=>`<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
