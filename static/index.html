@@ -81,7 +81,8 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
   gap:16px;margin-bottom:30px}
 .card{border:2px solid var(--ink);border-radius:var(--r);background:var(--card);
   box-shadow:var(--shadow);padding:14px 16px 12px;position:relative;
-  border-left-width:10px;text-align:left;transition:transform .08s}
+  border-left-width:10px;text-align:left;transition:transform .08s;
+  cursor:pointer;display:block;width:100%}
 .card:hover{transform:translate(-1px,-1px)}
 .card:active{transform:translate(2px,2px);box-shadow:none}
 .card.s-working{border-left-color:var(--blue)}
@@ -113,6 +114,27 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
 .card .meta{display:flex;align-items:flex-end;gap:10px;margin-top:8px}
 .card .elapsed{font-family:var(--mono);font-size:.7rem;opacity:.7}
 .spark{margin-left:auto}
+
+/* gating: toggle + allow/deny */
+.gate-toggle{position:absolute;top:12px;right:12px;display:flex;gap:4px;
+  align-items:center;font-family:var(--mono);font-size:.6rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:.05em;padding:3px 8px;
+  border:2px solid var(--ink);border-radius:99px;background:var(--card)}
+.gate-toggle.on{background:var(--lav);color:var(--ink)}
+.gate-toggle .icon{width:.85em;height:.85em}
+.card.gatable .row1{padding-right:66px}  /* clear the absolute gate toggle */
+.decision{margin-top:10px;border:2px solid var(--ink);border-radius:10px;
+  background:var(--orange-soft);padding:9px 11px}
+.decision-action{font-family:var(--mono);font-size:.72rem;font-weight:700;
+  display:flex;gap:6px;align-items:center;margin-bottom:8px;word-break:break-word}
+.decision-btns{display:flex;gap:8px}
+.decision-btns button{flex:1;display:flex;gap:5px;align-items:center;
+  justify-content:center;font-weight:700;font-size:.8rem;padding:6px 0;
+  border:2px solid var(--ink);border-radius:9px;box-shadow:2px 2px 0 var(--ink)}
+.decision-btns button:active{transform:translate(2px,2px);box-shadow:none}
+.db-allow{background:var(--lime)}
+.db-deny{background:var(--coral);color:#fff}
+.decision-btns .icon{width:.95em;height:.95em}
 .empty{border:2px dashed var(--ink);border-radius:var(--r);padding:34px;
   text-align:center;opacity:.65;margin-bottom:30px}
 .empty b{font-family:var(--display)}
@@ -252,6 +274,9 @@ const ICONS={
   bell:icon('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
   bellOff:icon('<path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5"/><path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/>'),
   clock:icon('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
+  shield:icon('<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>'),
+  check:icon('<path d="M20 6 9 17l-5-5"/>'),
+  x:icon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
 };
 const STATUS_ICON={
   working:icon('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>'),
@@ -356,8 +381,18 @@ function render(){
     return (rank[a.status]-rank[b.status])||(arank(a)-arank(b))
       ||(b.last_seen_at-a.last_seen_at);});
   $('#emptyState').hidden=shown.length>0;
-  $('#grid').innerHTML=shown.map(s=>`
-    <button class="card s-${s.status}" data-sid="${esc(s.session_id)}">
+  const GATABLE=['claude-code','cursor'];
+  const decBySid={};
+  for(const d of (state.decisions||[]))decBySid[d.session_id]=d;
+  $('#grid').innerHTML=shown.map(s=>{
+    const gatable=GATABLE.includes(s.agent_type);
+    const dec=decBySid[s.session_id];
+    return `
+    <div class="card s-${s.status}${gatable?' gatable':''}" role="button" tabindex="0" data-sid="${esc(s.session_id)}">
+      ${gatable?`<button class="gate-toggle ${s.gated?'on':''}" data-gate="${esc(s.session_id)}"
+        data-on="${s.gated?0:1}" aria-pressed="${!!s.gated}"
+        title="${s.gated?'Gating on: actions wait for your approval':'Turn on approval gating for this session'}">
+        ${ICONS.shield}${s.gated?'Gated':'Gate'}</button>`:''}
       <div class="row1">
         <span class="badge b-${esc(s.agent_type)}">${esc(s.agent_type)}</span>
         ${s.model?`<span class="model">${esc(s.model)}</span>`:''}
@@ -365,11 +400,18 @@ function render(){
       </div>
       <div class="proj">${esc(s.project||s.session_id)}</div>
       <div class="task">${esc(s.current_task||'No task reported yet')}</div>
+      ${dec?`<div class="decision">
+        <div class="decision-action">${ICONS.shield}${esc(dec.summary||dec.tool||'Pending action')}</div>
+        <div class="decision-btns">
+          <button class="db-allow" data-decide="allow" data-did="${dec.id}">${ICONS.check}Allow</button>
+          <button class="db-deny" data-decide="deny" data-did="${dec.id}">${ICONS.x}Deny</button>
+        </div>
+      </div>`:''}
       <div class="meta">
         <span class="elapsed">${ICONS.clock} ${ago(now-s.started_at)} · last ${ago(now-s.last_seen_at)} ago</span>
         ${spark(E,s.session_id,now)}
       </div>
-    </button>`).join('');
+    </div>`;}).join('');
 
   /* feed */
   const sName=Object.fromEntries(S.map(s=>[s.session_id,s.project||s.agent_type]));
@@ -439,6 +481,18 @@ $('#filters').onclick=e=>{
   render();
 };
 $('#grid').onclick=async e=>{
+  const gt=e.target.closest('[data-gate]');
+  if(gt){e.stopPropagation();
+    await fetch(`/api/session/${encodeURIComponent(gt.dataset.gate)}/gate`,
+      {method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({on:gt.dataset.on==='1'})});
+    return;}
+  const db=e.target.closest('[data-decide]');
+  if(db){e.stopPropagation();
+    await fetch(`/api/decision/${db.dataset.did}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({action:db.dataset.decide})});
+    return;}
   const c=e.target.closest('.card'); if(!c)return;
   const sid=c.dataset.sid;
   const s=state.sessions.find(x=>x.session_id===sid);
@@ -452,6 +506,10 @@ $('#grid').onclick=async e=>{
       · ${ev.kind.replace('_',' ')}</div>
     <div class="s">${esc(ev.summary)}</div></li>`).join('')||'<li><span class="s">No events.</span></li>';
 };
+$('#grid').addEventListener('keydown',e=>{
+  if((e.key==='Enter'||e.key===' ')&&e.target.classList.contains('card')){
+    e.preventDefault();e.target.click();}
+});
 function closeDrawer(){$('#overlay').classList.remove('open');$('#drawer').classList.remove('open')}
 $('#overlay').onclick=closeDrawer;
 $('#drawerClose').onclick=closeDrawer;

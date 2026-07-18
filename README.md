@@ -99,6 +99,28 @@ remembered. First time you leave it on, your browser will ask permission.
 
 ---
 
+## Allow / deny (gating)
+
+Approve or reject an agent's action from the dashboard instead of switching to
+its terminal. Gating is **opt-in per session**: each Claude Code and Cursor card
+has a **Gate** toggle (default off). Ungated sessions behave exactly as before.
+
+When you turn gating on for a session, its next command/tool call pauses and the
+card shows the concrete action (e.g. `Bash rm -rf build/`) with **Allow** and
+**Deny** buttons. Click one and the agent proceeds or is refused. If you do not
+answer within `GATE_TIMEOUT_S` (120s), or the dashboard is down, the agent falls
+back to its own normal permission prompt — gating never blocks an agent
+permanently. Only an explicit Deny stops an action.
+
+| Agent | Gating |
+|---|---|
+| Claude Code | Full (via the `PreToolUse` hook `cc_gate.py`, which also reports tool activity) |
+| Cursor | Shell/MCP executions (beta) |
+| Codex | Not supported — its `notify` is one-way, so it can't wait for a remote decision. Codex still shows its waiting-for-approval state; you approve in Codex itself. |
+| Kiro | Deferred until validated against a live install |
+
+---
+
 ## Menu bar (optional)
 
 `scripts/amc.5s.sh` is a SwiftBar/xbar plugin. Install
@@ -122,6 +144,9 @@ too, so nothing here needs to change for it.
 | `GET /summary` | Compact counts for menu bar / notch |
 | `WS /ws` | Live push |
 | `POST /ingest` | Generic webhook |
+| `POST /gate/{agent}` | Gated hook long-polls here for an allow/deny decision |
+| `POST /api/decision/{id}` | Resolve a pending decision (`{"action":"allow"\|"deny"}`) |
+| `POST /api/session/{id}/gate` | Turn gating on/off for a session (`{"on":true\|false}`) |
 
 ---
 
@@ -137,9 +162,8 @@ launchctl load ~/Library/LaunchAgents/com.aidill.amc.plist
 
 ## Notes and limits
 
-- Read-only by design. It watches, it does not control agents. Allow/deny
-  buttons are a planned later phase; the event schema already carries an
-  `awaiting_decision_id` field so that can be added without a redesign.
+- Mostly read-only. It watches by default; the one control it has is opt-in
+  allow/deny gating (see above), which is off unless you turn it on per session.
 - Cursor hooks are beta. If Cursor sessions never appear, its hook event names
   may have changed. Fix them in `~/.cursor/hooks.json`; only that one adapter is
   affected. Claude Code and Codex are unaffected.

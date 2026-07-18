@@ -32,6 +32,7 @@ HOME = Path.home()
 WORKING_S = 30          # activity within 30s = working
 IDLE_S = 600            # 30s..10min = idle, beyond = ended
 WAITING_TTL_S = 7200    # waiting_input stays visible this long before ended
+GATE_TIMEOUT_S = 120    # how long a gated hook waits for an allow/deny click
 EVENT_FEED_LIMIT = 300
 
 # ---------------------------------------------------------------- db
@@ -51,16 +52,28 @@ def init_db():
           agent_type TEXT, model TEXT, project TEXT, cwd TEXT,
           status TEXT DEFAULT 'working',
           current_task TEXT,
-          started_at REAL, last_seen_at REAL
+          started_at REAL, last_seen_at REAL,
+          gated INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS events(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           session_id TEXT, ts REAL, kind TEXT, summary TEXT,
           detail TEXT, awaiting_decision_id TEXT
         );
+        CREATE TABLE IF NOT EXISTS decisions(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT, tool TEXT, summary TEXT, detail TEXT,
+          status TEXT DEFAULT 'pending',
+          created_at REAL, decided_at REAL
+        );
         CREATE INDEX IF NOT EXISTS ev_sid ON events(session_id, ts);
         CREATE INDEX IF NOT EXISTS ev_ts ON events(ts);
+        CREATE INDEX IF NOT EXISTS dec_status ON decisions(status);
         """)
+        # older DBs predate the gated column; add it if missing
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(sessions)")}
+        if "gated" not in cols:
+            c.execute("ALTER TABLE sessions ADD COLUMN gated INTEGER DEFAULT 0")
 
 def upsert_session(sid, agent_type, *, model=None, project=None, cwd=None,
                    status=None, task=None, ts=None):
@@ -127,6 +140,9 @@ def state_payload():
         events = [dict(r) for r in c.execute(
             "SELECT id,session_id,ts,kind,summary FROM events "
             "ORDER BY ts DESC LIMIT ?", (EVENT_FEED_LIMIT,))]
+        decisions = [dict(r) for r in c.execute(
+            "SELECT id,session_id,tool,summary,created_at FROM decisions "
+            "WHERE status='pending' ORDER BY created_at")]
         day_start = datetime.datetime.combine(
             datetime.date.today(), datetime.time.min).timestamp()
         today = c.execute(
@@ -134,7 +150,7 @@ def state_payload():
             "SUM(kind='completed') done FROM events WHERE ts>=?",
             (day_start,)).fetchone()
     return {"type": "state", "now": time.time(),
-            "sessions": sessions, "events": events,
+            "sessions": sessions, "events": events, "decisions": decisions,
             "today": {"events": today["n"] or 0,
                       "tool_calls": today["tools"] or 0,
                       "completed": today["done"] or 0}}
@@ -163,6 +179,9 @@ class Hub:
             self.leave(ws)
 
 hub = Hub()
+
+# decision id -> asyncio.Event, used to wake a gated hook when the user decides
+pending: dict[int, "asyncio.Event"] = {}
 
 def txt(x, limit=200):
     if x is None:
@@ -306,6 +325,109 @@ async def handle_codex_notify(p):
         upsert_session(sid, "codex")
         add_event(sid, "status_change", ntype or "notify", p)
     await hub.broadcast()
+
+# ---------------------------------------------------------------- gating
+
+def gate_sid(agent, p):
+    if agent == "cursor":
+        return str(p.get("conversation_id") or p.get("session_id")
+                   or p.get("generation_id") or "cursor")
+    return str(p.get("session_id") or agent)
+
+def describe_action(agent, p):
+    """Human summary of the action a hook is asking permission for."""
+    if agent == "claude-code":
+        tool = p.get("tool_name", "tool")
+        ti = p.get("tool_input") or {}
+        target = ti.get("file_path") or ti.get("command") or ti.get("pattern") or ""
+        return tool, f"{tool} {txt(target, 160)}".strip()
+    if agent == "cursor":
+        cmd = p.get("command") or p.get("tool_name") or ""
+        return "command", txt(cmd, 160) or "Cursor action"
+    return "action", "Pending action"
+
+def is_gated(sid):
+    with db() as c:
+        row = c.execute("SELECT gated FROM sessions WHERE session_id=?",
+                        (sid,)).fetchone()
+    return bool(row and row["gated"])
+
+async def do_gate(agent, p):
+    """Block a gated hook until the user clicks Allow/Deny, or time out.
+    Returns one of: {gate:False} | {gate:True, decision:allow|deny|timeout}.
+    Always records the action as a tool_use event so the feed stays live even
+    for ungated sessions (this hook replaces the plain PreToolUse reporter)."""
+    sid = gate_sid(agent, p)
+    tool, summary = describe_action(agent, p)
+    cwd = p.get("cwd") or (p.get("workspace_roots") or [None])[0]
+    if not is_gated(sid):
+        upsert_session(sid, agent, cwd=cwd, status="working")
+        add_event(sid, "tool_use", summary)
+        await hub.broadcast()
+        return {"gate": False}
+    with db() as c:
+        cur = c.execute(
+            "INSERT INTO decisions(session_id,tool,summary,detail,status,created_at)"
+            " VALUES(?,?,?,?, 'pending', ?)",
+            (sid, tool, summary, json.dumps(p)[:4000], time.time()))
+        did = cur.lastrowid
+    upsert_session(sid, agent, cwd=cwd, status="waiting_input")
+    add_event(sid, "waiting_input", summary or "Awaiting your decision",
+              decision_id=str(did))
+    ev = asyncio.Event()
+    pending[did] = ev
+    await hub.broadcast()
+    try:
+        await asyncio.wait_for(ev.wait(), GATE_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        with db() as c:
+            c.execute("UPDATE decisions SET status='expired', decided_at=? "
+                      "WHERE id=? AND status='pending'", (time.time(), did))
+        pending.pop(did, None)
+        with db() as c:
+            c.execute("UPDATE sessions SET status='working' WHERE session_id=?",
+                      (sid,))
+        add_event(sid, "status_change", "Decision timed out, agent proceeded")
+        await hub.broadcast()
+        return {"gate": True, "decision": "timeout"}
+    pending.pop(did, None)
+    with db() as c:
+        r = c.execute("SELECT status FROM decisions WHERE id=?", (did,)).fetchone()
+    return {"gate": True,
+            "decision": "allow" if r and r["status"] == "allowed" else "deny"}
+
+async def do_decide(did, action):
+    """Resolve a pending decision. Returns (body, http_status)."""
+    if action not in ("allow", "deny"):
+        return {"ok": False, "reason": "bad_action"}, 400
+    with db() as c:
+        row = c.execute("SELECT * FROM decisions WHERE id=?", (did,)).fetchone()
+        if not row:
+            return {"ok": False, "reason": "not_found"}, 404
+        if row["status"] != "pending":
+            return {"ok": False, "reason": "not_pending"}, 200
+        new_status = "allowed" if action == "allow" else "denied"
+        c.execute("UPDATE decisions SET status=?, decided_at=? WHERE id=?",
+                  (new_status, time.time(), did))
+    sid = row["session_id"]
+    verb = "Allowed" if action == "allow" else "Denied"
+    add_event(sid, "status_change",
+              f"{verb} from dashboard: {row['summary'] or row['tool']}")
+    with db() as c:
+        c.execute("UPDATE sessions SET status='working' WHERE session_id=?", (sid,))
+    ev = pending.get(did)
+    if ev:
+        ev.set()
+    await hub.broadcast()
+    return {"ok": True, "decision": new_status}, 200
+
+async def do_set_gate(sid, on):
+    on = 1 if on else 0
+    with db() as c:
+        c.execute("UPDATE sessions SET gated=? WHERE session_id=?", (on, sid))
+    add_event(sid, "status_change", f"Gating {'enabled' if on else 'disabled'}")
+    await hub.broadcast()
+    return {"ok": True, "gated": bool(on)}
 
 # ---------------------------------------------------------------- tailers
 
@@ -502,6 +624,21 @@ async def ingest_kiro(event: str, req: Request):
 async def ingest_codex(req: Request):
     await handle_codex_notify(await safe_json(req))
     return {"ok": True}
+
+@app.post("/gate/{agent}")
+async def gate(agent: str, req: Request):
+    return await do_gate(agent, await safe_json(req))
+
+@app.post("/api/decision/{did}")
+async def decision(did: int, req: Request):
+    p = await safe_json(req)
+    body, code = await do_decide(did, p.get("action"))
+    return JSONResponse(body, status_code=code)
+
+@app.post("/api/session/{sid}/gate")
+async def session_gate(sid: str, req: Request):
+    p = await safe_json(req)
+    return await do_set_gate(sid, p.get("on"))
 
 async def safe_json(req):
     try:

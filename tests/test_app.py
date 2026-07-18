@@ -21,7 +21,7 @@ def fresh_db(tmp_path, monkeypatch):
 
 
 def run(coro):
-    asyncio.run(coro)
+    return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------- statuses
@@ -179,6 +179,114 @@ def test_tailer_recovers_from_truncation(fresh_db, tmp_path):
     log.write_text('{"n": 3}\n')  # rotated: shorter than old offset
     t.scan()
     assert [o["n"] for o in seen] == [1, 2, 3]
+
+
+# ---------------------------------------------------------------- gating
+
+def _pending_id(sid="g1"):
+    with amc.db() as c:
+        r = c.execute("SELECT id FROM decisions WHERE session_id=? AND "
+                      "status='pending' ORDER BY id DESC LIMIT 1", (sid,)).fetchone()
+    return r["id"] if r else None
+
+
+def test_gate_passthrough_when_not_gated(fresh_db):
+    amc.upsert_session("u1", "claude-code", status="working")
+    res = run(amc.do_gate("claude-code", {"session_id": "u1",
+                                              "tool_name": "Bash",
+                                              "tool_input": {"command": "ls"}}))
+    assert res == {"gate": False}
+    with amc.db() as c:
+        n = c.execute("SELECT COUNT(*) n FROM decisions").fetchone()["n"]
+    assert n == 0  # no decision row created for ungated sessions
+
+
+def test_set_gate_toggles_flag(fresh_db):
+    amc.upsert_session("g0", "claude-code", status="working")
+    run(amc.do_set_gate("g0", True))
+    assert amc.is_gated("g0") is True
+    run(amc.do_set_gate("g0", False))
+    assert amc.is_gated("g0") is False
+
+
+def _gate_roundtrip(action):
+    async def scenario():
+        amc.upsert_session("g1", "claude-code", status="working")
+        await amc.do_set_gate("g1", True)
+        task = asyncio.create_task(amc.do_gate(
+            "claude-code", {"session_id": "g1", "tool_name": "Bash",
+                            "tool_input": {"command": "rm -rf build"}}))
+        did = None
+        for _ in range(200):
+            await asyncio.sleep(0.005)
+            did = _pending_id()
+            if did:
+                break
+        assert did, "gate never created a pending decision"
+        body, code = await amc.do_decide(did, action)
+        gate_res = await task
+        return did, body, code, gate_res
+    return asyncio.run(scenario())
+
+
+def test_gate_allow_roundtrip(fresh_db):
+    did, body, code, gate_res = _gate_roundtrip("allow")
+    assert code == 200 and body["ok"] is True
+    assert gate_res == {"gate": True, "decision": "allow"}
+    with amc.db() as c:
+        st = c.execute("SELECT status FROM decisions WHERE id=?", (did,)).fetchone()["status"]
+        sess = c.execute("SELECT status FROM sessions WHERE session_id='g1'").fetchone()["status"]
+    assert st == "allowed"
+    assert sess == "working"
+
+
+def test_gate_deny_roundtrip(fresh_db):
+    did, body, code, gate_res = _gate_roundtrip("deny")
+    assert gate_res == {"gate": True, "decision": "deny"}
+    with amc.db() as c:
+        st = c.execute("SELECT status FROM decisions WHERE id=?", (did,)).fetchone()["status"]
+    assert st == "denied"
+
+
+def test_gate_timeout(fresh_db, monkeypatch):
+    monkeypatch.setattr(amc, "GATE_TIMEOUT_S", 0.05)
+
+    async def scenario():
+        amc.upsert_session("g2", "claude-code", status="working")
+        await amc.do_set_gate("g2", True)
+        return await amc.do_gate("claude-code",
+                                 {"session_id": "g2", "tool_name": "Bash",
+                                  "tool_input": {"command": "ls"}})
+    res = asyncio.run(scenario())
+    assert res == {"gate": True, "decision": "timeout"}
+    with amc.db() as c:
+        st = c.execute("SELECT status FROM decisions WHERE session_id='g2'").fetchone()["status"]
+        sess = c.execute("SELECT status FROM sessions WHERE session_id='g2'").fetchone()["status"]
+    assert st == "expired"
+    assert sess == "working"
+
+
+def test_decision_not_found_and_double_decide(fresh_db):
+    body, code = run(amc.do_decide(999, "allow"))
+    assert code == 404 and body["reason"] == "not_found"
+
+    with amc.db() as c:
+        c.execute("INSERT INTO decisions(session_id,tool,summary,status,created_at)"
+                  " VALUES('s','Bash','x','pending',?)", (time.time(),))
+        did = c.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    amc.upsert_session("s", "claude-code", status="waiting_input")
+    body, code = run(amc.do_decide(did, "allow"))
+    assert body["ok"] is True
+    body, code = run(amc.do_decide(did, "deny"))  # already resolved
+    assert body == {"ok": False, "reason": "not_pending"}
+
+
+def test_cursor_gate_sid_and_summary(fresh_db):
+    # cursor identifies sessions by conversation_id, not session_id
+    assert amc.gate_sid("cursor", {"conversation_id": "conv-9"}) == "conv-9"
+    tool, summary = amc.describe_action("cursor", {"command": "npm run deploy"})
+    assert tool == "command"
+    assert "npm run deploy" in summary
 
 
 # ---------------------------------------------------------------- endpoints

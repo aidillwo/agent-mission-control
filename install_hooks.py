@@ -39,6 +39,11 @@ def save(path: Path, text: str, label: str):
 
 
 def cc_command(event: str) -> str:
+    if event == "PreToolUse":
+        # PreToolUse runs the gate: it reports the tool_use AND, when the session
+        # has gating enabled, blocks for an allow/deny decision from the dashboard.
+        script = HERE / "hooks" / "cc_gate.py"
+        return f'python3 "{script}"  # {MARK}'
     return ("curl -s -m 2 -X POST "
             f"http://localhost:7777/ingest/claude-code/{event} "
             "-H 'Content-Type: application/json' --data-binary @- "
@@ -59,12 +64,14 @@ def install_claude_code():
     hooks = settings.setdefault("hooks", {})
     for event in CC_EVENTS:
         entries = hooks.setdefault(event, [])
-        already = any(MARK in json.dumps(e) for e in entries)
-        if already:
-            continue
+        desired = cc_command(event)
+        if any(desired in json.dumps(e) for e in entries):
+            continue  # exact command already present
+        # drop any stale AMC entry (e.g. the pre-gate PreToolUse curl) then add
+        entries[:] = [e for e in entries if MARK not in json.dumps(e)]
         entries.append({"matcher": "*",
                         "hooks": [{"type": "command",
-                                   "command": cc_command(event)}]})
+                                   "command": desired}]})
     save(path, json.dumps(settings, indent=2), "Claude Code hooks")
 
 
