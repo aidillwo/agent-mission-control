@@ -5,8 +5,8 @@ what each one is working on, how many are live, which model and project, and
 which ones are blocked waiting for your input. Everything runs on your machine.
 Nothing leaves it. No cloud, no accounts.
 
-Supports Claude Code (terminal), Cursor, Codex (desktop + CLI), and your own
-Python bots or ETL jobs.
+Supports Claude Code (terminal + desktop), Cursor, Codex (desktop + CLI),
+Kiro (beta), and your own Python bots or ETL jobs.
 
 ![dashboard](docs/screenshot.png)
 
@@ -48,6 +48,7 @@ Four intake paths feed one server. You do not need all of them; each works alone
 | Claude Code (terminal) | Native hooks + session-log tailing | `install_hooks.py` writes to `~/.claude/settings.json`. Even with no hooks, the JSONL transcript tailer picks sessions up. |
 | Cursor | Agent hooks (beta) | `install_hooks.py` writes to `~/.cursor/hooks.json`, pointing at `hooks/cursor_hook.sh`. |
 | Codex (desktop + CLI) | Session-log tailing + `notify` | Tailer reads `~/.codex/sessions/`. `install_hooks.py` adds a `notify` line to `~/.codex/config.toml` for instant waiting-for-input alerts. |
+| Kiro (beta) | Agent hook forwarder | Kiro's Agent Hooks are per-workspace and set in Kiro's UI, so there's no global file to auto-edit. `install_hooks.py` prints how to point a hook at `hooks/kiro_hook.sh`, which forwards to `/ingest/kiro/{event}`. |
 | Custom Python bots / ETL | Generic webhook | No install. POST to `http://localhost:7777/ingest`. See below. |
 
 ### Reporting from your own scripts
@@ -142,6 +143,15 @@ launchctl load ~/Library/LaunchAgents/com.aidill.amc.plist
 - Cursor hooks are beta. If Cursor sessions never appear, its hook event names
   may have changed. Fix them in `~/.cursor/hooks.json`; only that one adapter is
   affected. Claude Code and Codex are unaffected.
+- Kiro is beta and was wired against Kiro's documented agent-hook shape without a
+  live install to test against. The `/ingest/kiro/{event}` normalizer matches
+  field names defensively; if events look wrong, adjust `handle_kiro` in `app.py`.
+- Chat apps (Claude Desktop, ChatGPT) are **not** tracked and can't meaningfully
+  be. They're conversational, not agentic coding sessions: no local hooks, and
+  no session transcripts on disk (conversations live server-side; what's on disk
+  is opaque Chromium storage). They also lack the "working → waiting for you →
+  done" lifecycle the dashboard is built around. The only sensible integration
+  would be a custom MCP server reporting tool activity via the `/ingest` webhook.
 - Log paths assumed: `~/.claude/projects/`, `~/.codex/sessions/`. If Codex
   writes elsewhere on your setup, adjust the glob in `app.py`.
 - Localhost only. No auth, because nothing is exposed off your machine.

@@ -108,7 +108,63 @@ def test_generic_rejects_unknown_status(fresh_db):
     assert row["status"] == "working"
 
 
+# ---------------------------------------------------------------- kiro
+
+def test_kiro_prompt_and_approval(fresh_db):
+    run(amc.handle_kiro("prompt", {"session_id": "k1", "prompt": "refactor auth",
+                                   "cwd": "/x/proj"}))
+    with amc.db() as c:
+        row = c.execute("SELECT status,current_task,agent_type,project "
+                        "FROM sessions WHERE session_id='k1'").fetchone()
+    assert row["status"] == "working"
+    assert row["current_task"] == "refactor auth"
+    assert row["agent_type"] == "kiro"
+    assert row["project"] == "proj"
+
+    run(amc.handle_kiro("approval", {"session_id": "k1",
+                                     "message": "Run rm -rf build?"}))
+    with amc.db() as c:
+        row = c.execute("SELECT status FROM sessions WHERE session_id='k1'").fetchone()
+    assert row["status"] == "waiting_input"
+
+
+def test_kiro_tool_and_stop(fresh_db):
+    run(amc.handle_kiro("shell", {"session_id": "k2", "command": "npm test"}))
+    run(amc.handle_kiro("fileEdit", {"session_id": "k2", "file_path": "a.py"}))
+    run(amc.handle_kiro("stop", {"session_id": "k2"}))
+    with amc.db() as c:
+        row = c.execute("SELECT status FROM sessions WHERE session_id='k2'").fetchone()
+        kinds = [r["kind"] for r in c.execute(
+            "SELECT kind FROM events WHERE session_id='k2' ORDER BY id")]
+    assert row["status"] == "idle"  # turn end, not session end
+    assert kinds == ["tool_use", "tool_use", "completed"]
+
+
+def test_kiro_endpoint(fresh_db):
+    client = TestClient(amc.app)
+    r = client.post("/ingest/kiro/prompt",
+                    json={"session_id": "k3", "prompt": "hi"})
+    assert r.json() == {"ok": True}
+    with amc.db() as c:
+        row = c.execute("SELECT agent_type FROM sessions WHERE session_id='k3'").fetchone()
+    assert row["agent_type"] == "kiro"
+
+
 # ---------------------------------------------------------------- tailer
+
+def test_tailer_marks_dirty_on_new_lines(fresh_db, tmp_path):
+    """New tailer lines must flag dirty so run() pushes a live WS broadcast."""
+    log = tmp_path / "a.jsonl"
+    t = amc.Tailer(str(tmp_path / "*.jsonl"), lambda p, o: None)
+    t.first_pass = False
+    log.write_text('{"n": 1}\n')
+    t.dirty = False
+    t.scan()
+    assert t.dirty is True
+    t.dirty = False
+    t.scan()  # nothing new
+    assert t.dirty is False
+
 
 def test_tailer_recovers_from_truncation(fresh_db, tmp_path):
     log = tmp_path / "a.jsonl"

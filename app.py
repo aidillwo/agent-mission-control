@@ -250,6 +250,41 @@ async def handle_cursor(event, p):
         add_event(sid, "status_change", event, p)
     await hub.broadcast()
 
+async def handle_kiro(event, p):
+    """Kiro (AWS agentic IDE, Code OSS based). Wired blind against Kiro's
+    documented agent-hook shape, so field names are matched defensively and
+    this adapter is beta until validated against a live Kiro install."""
+    sid = str(p.get("session_id") or p.get("conversation_id")
+              or p.get("chat_id") or "kiro")
+    roots = p.get("workspace_roots") or p.get("workspaceFolders") or []
+    cwd = p.get("cwd") or p.get("workspace") or (roots[0] if roots else None)
+    ev = event.lower()
+    if "approval" in ev or "permission" in ev or "confirm" in ev:
+        msg = txt(p.get("message") or p.get("command"), 160)
+        upsert_session(sid, "kiro", cwd=cwd, status="waiting_input")
+        add_event(sid, "waiting_input", msg or "Kiro needs your approval", p)
+    elif "prompt" in ev or "submit" in ev or "userinput" in ev:
+        task = txt(p.get("prompt") or p.get("text") or p.get("message"), 160)
+        upsert_session(sid, "kiro", cwd=cwd, status="working", task=task or None)
+        add_event(sid, "prompt", task or "Prompt submitted", p)
+    elif "edit" in ev or "file" in ev or "write" in ev:
+        f = txt(p.get("file_path") or p.get("path"), 140)
+        upsert_session(sid, "kiro", cwd=cwd, status="working")
+        add_event(sid, "tool_use", f"edit {f}".strip(), p)
+    elif ("shell" in ev or "command" in ev or "exec" in ev or "tool" in ev
+          or "mcp" in ev):
+        cmd = txt(p.get("command") or p.get("tool_name") or p.get("name"), 140)
+        upsert_session(sid, "kiro", cwd=cwd, status="working")
+        add_event(sid, "tool_use", cmd or event, p)
+    elif "stop" in ev or "complete" in ev or "finish" in ev or "end" in ev:
+        # treat as turn end, not session end (reaper ages it out if truly idle)
+        upsert_session(sid, "kiro", cwd=cwd, status="idle")
+        add_event(sid, "completed", "Agent finished", p)
+    else:
+        upsert_session(sid, "kiro", cwd=cwd, status="working")
+        add_event(sid, "status_change", event, p)
+    await hub.broadcast()
+
 async def handle_codex_notify(p):
     ntype = p.get("type", "")
     # attach to the most recent codex session if the payload has no id
@@ -282,14 +317,20 @@ class Tailer:
         self.offsets = {}
         self.max_age = max_age_days * 86400
         self.first_pass = True
+        self.dirty = False   # set when scan() ingests new lines
 
     async def run(self):
         while True:
+            self.dirty = False
             try:
                 self.scan()
             except Exception:
                 pass
             self.first_pass = False
+            if self.dirty:
+                # tailer-sourced sessions (real Claude Code / Codex) must push
+                # live too, not just the webhook/hook paths.
+                await hub.broadcast()
             await asyncio.sleep(3)
 
     def scan(self):
@@ -320,6 +361,7 @@ class Tailer:
                         continue
                     try:
                         self.on_line(path, json.loads(line))
+                        self.dirty = True
                     except Exception:
                         continue
                 self.offsets[path] = f.tell()
@@ -383,7 +425,8 @@ async def process_scan():
     except ImportError:
         return
     KNOWN = {"claude": "claude-code", "codex": "codex",
-             "cursor": "cursor", "Cursor": "cursor"}
+             "cursor": "cursor", "Cursor": "cursor",
+             "kiro": "kiro", "Kiro": "kiro"}
     while True:
         try:
             seen = set()
@@ -448,6 +491,11 @@ async def ingest_cc(event: str, req: Request):
 @app.post("/ingest/cursor/{event}")
 async def ingest_cur(event: str, req: Request):
     await handle_cursor(event, await safe_json(req))
+    return {"ok": True}
+
+@app.post("/ingest/kiro/{event}")
+async def ingest_kiro(event: str, req: Request):
+    await handle_kiro(event, await safe_json(req))
     return {"ok": True}
 
 @app.post("/ingest/codex-notify")

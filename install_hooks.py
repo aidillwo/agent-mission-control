@@ -20,6 +20,7 @@ MARK = "agent-mission-control"
 CC_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
              "Notification", "Stop", "SessionEnd"]
 CURSOR_EVENTS = ["beforeSubmitPrompt", "beforeShellExecution", "afterFileEdit", "stop"]
+KIRO_EVENTS = ["prompt", "shell", "fileEdit", "approval", "stop"]
 
 
 def backup(path: Path):
@@ -106,11 +107,31 @@ def install_codex():
          "Codex notify")
 
 
+def install_kiro():
+    # Kiro (AWS agentic IDE, Code OSS based) configures Agent Hooks per-workspace
+    # through its own UI (stored as .kiro/hooks/*.kiro.hook), so there is no single
+    # global file to edit the way Cursor and Claude Code have. We detect Kiro and
+    # print how to point a hook at the forwarder; the /ingest/kiro endpoint is
+    # always live regardless.
+    script = HERE / "hooks" / "kiro_hook.sh"
+    present = (HOME / ".kiro").exists() or Path("/Applications/Kiro.app").exists()
+    if present:
+        print("[ok] Kiro detected (beta). Add an Agent Hook in Kiro that runs, "
+              "for each agent event:")
+    else:
+        print("[skip] Kiro not detected. When installed, add an Agent Hook that "
+              "runs, for each agent event:")
+    print(f"       {script} <eventName>")
+    print(f"     Suggested event names: {', '.join(KIRO_EVENTS)}. Or POST "
+          "directly to http://localhost:7777/ingest/kiro/<event>.")
+
+
 if __name__ == "__main__":
     print(f"Agent Mission Control installer (dry-run={DRY})\n")
     install_claude_code()
     install_cursor()
     install_codex()
+    install_kiro()
     print("\nDone. Custom Python bots need no install: POST to "
           "http://localhost:7777/ingest (see README).")
     print("Uninstall: restore the .amc.bak files or delete entries containing "
