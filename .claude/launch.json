@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "amc",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["app.py"],
+      "port": 7777
+    }
+  ]
+}

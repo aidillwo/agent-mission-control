@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Mission Control</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232450FF'/%3E%3Cg fill='none' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' transform='translate(4 4)'%3E%3Cpath d='M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z'/%3E%3Cpath d='m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z'/%3E%3Cpath d='M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0'/%3E%3Cpath d='M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Archivo:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#FFF9F0; --ink:#17203B; --card:#FFFFFF; --line:#17203B;
+  --blue:#2450FF; --blue-soft:#DDE5FF;
+  --lime:#C6F432; --lime-deep:#4C9A1D;
+  --orange:#FF8A00; --orange-soft:#FFE8CC;
+  --coral:#FF4D5E; --coral-soft:#FFDDE0;
+  --lav:#B49CFF; --lav-soft:#EDE6FF;
+  --teal:#23C4B4; --teal-soft:#D5F6F2;
+  --r:14px; --shadow:4px 4px 0 var(--ink);
+  --display:'Space Grotesk',system-ui,sans-serif;
+  --body:'Archivo',system-ui,sans-serif;
+  --mono:'Space Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+.icon{width:1.1em;height:1.1em;flex-shrink:0;vertical-align:-.18em}
+html,body{max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);
+  font-size:15px;line-height:1.45;padding:20px 22px 60px}
+button{font:inherit;cursor:pointer;color:inherit}
+a{color:inherit}
+.wrap{max-width:1280px;margin:0 auto}
+
+/* header */
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+.logo{display:flex;align-items:center;gap:10px}
+.logo .mark{width:34px;height:34px;border:2px solid var(--ink);border-radius:9px;
+  background:var(--blue);box-shadow:var(--shadow);display:grid;place-items:center;
+  color:#fff;font-family:var(--mono);font-weight:700;font-size:15px}
+h1{font-family:var(--display);font-weight:700;font-size:1.35rem;letter-spacing:-.01em}
+.conn{font-family:var(--mono);font-size:.72rem;padding:4px 10px;border:2px solid var(--ink);
+  border-radius:99px;background:var(--lime)}
+.conn.off{background:var(--coral-soft)}
+.spacer{flex:1}
+.clock{font-family:var(--mono);font-size:.85rem}
+.bell{border:2px solid var(--ink);border-radius:12px;background:var(--card);
+  box-shadow:var(--shadow);padding:7px 13px;display:flex;gap:8px;align-items:center;
+  font-weight:600;font-size:.85rem;transition:transform .08s}
+.bell:active{transform:translate(2px,2px);box-shadow:none}
+.bell.muted{background:var(--lav-soft)}
+
+/* hero tiles */
+.hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+  gap:16px;margin-bottom:24px}
+.tile{border:2px solid var(--ink);border-radius:var(--r);box-shadow:var(--shadow);
+  padding:16px 18px;position:relative;overflow:hidden}
+.tile .lbl{font-family:var(--mono);font-size:.7rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:.09em}
+.tile .num{font-family:var(--display);font-weight:700;font-size:3.2rem;
+  line-height:1.05;letter-spacing:-.03em}
+.tile .sub{font-size:.78rem;opacity:.75}
+.t-live{background:var(--blue);color:#fff}
+.t-wait{background:var(--orange)}
+.t-wait.hot{animation:throb 1.4s ease-in-out infinite}
+.t-done{background:var(--lime)}
+.t-tools{background:var(--teal-soft)}
+@keyframes throb{0%,100%{box-shadow:var(--shadow)}50%{box-shadow:4px 4px 0 var(--ink),0 0 0 7px rgba(255,138,0,.35)}}
+
+/* filters */
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.chip{border:2px solid var(--ink);border-radius:99px;background:var(--card);
+  padding:5px 13px;font-size:.8rem;font-weight:600}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.chip:focus-visible,.bell:focus-visible,.card:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+
+/* grid */
+h2{font-family:var(--display);font-size:1.05rem;margin:6px 0 12px;
+  display:flex;align-items:center;gap:8px}
+h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:16px;margin-bottom:30px}
+.card{border:2px solid var(--ink);border-radius:var(--r);background:var(--card);
+  box-shadow:var(--shadow);padding:14px 16px 12px;position:relative;
+  border-left-width:10px;text-align:left;transition:transform .08s}
+.card:hover{transform:translate(-1px,-1px)}
+.card:active{transform:translate(2px,2px);box-shadow:none}
+.card.s-working{border-left-color:var(--blue)}
+.card.s-idle{border-left-color:var(--lav)}
+.card.s-waiting_input{border-left-color:var(--orange);background:var(--orange-soft);
+  animation:cardpulse 1.4s ease-in-out infinite}
+.card.s-error{border-left-color:var(--coral);background:var(--coral-soft)}
+.card.s-ended{border-left-color:#C9C2B4;opacity:.72}
+@keyframes cardpulse{0%,100%{box-shadow:var(--shadow)}50%{box-shadow:4px 4px 0 var(--ink),0 0 0 6px rgba(255,138,0,.3)}}
+.card .row1{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.badge{font-family:var(--mono);font-size:.66rem;font-weight:700;padding:3px 8px;
+  border:2px solid var(--ink);border-radius:7px;text-transform:uppercase;letter-spacing:.05em}
+.b-claude-code{background:var(--blue-soft)}
+.b-cursor{background:var(--lav-soft)}
+.b-codex{background:var(--teal-soft)}
+.b-custom{background:var(--lime)}
+.model{font-family:var(--mono);font-size:.66rem;opacity:.8}
+.status-pill{margin-left:auto;font-size:.68rem;font-weight:700;padding:3px 9px;
+  border:2px solid var(--ink);border-radius:99px;display:flex;gap:5px;align-items:center}
+.p-working{background:var(--blue);color:#fff}
+.p-idle{background:var(--lav)}
+.p-waiting_input{background:var(--orange)}
+.p-error{background:var(--coral);color:#fff}
+.p-ended{background:#E7E0D2}
+.card .proj{font-family:var(--display);font-weight:700;font-size:1rem;margin-bottom:2px}
+.card .task{font-size:.82rem;min-height:2.4em;opacity:.85;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .meta{display:flex;align-items:flex-end;gap:10px;margin-top:8px}
+.card .elapsed{font-family:var(--mono);font-size:.7rem;opacity:.7}
+.spark{margin-left:auto}
+.empty{border:2px dashed var(--ink);border-radius:var(--r);padding:34px;
+  text-align:center;opacity:.65;margin-bottom:30px}
+.empty b{font-family:var(--display)}
+.empty code{font-family:var(--mono);font-size:.8rem;background:var(--card);
+  padding:2px 7px;border-radius:6px;border:1px solid var(--ink)}
+
+/* lower two-col */
+.cols{display:grid;grid-template-columns:1.25fr .9fr;gap:20px}
+@media(max-width:900px){.cols{grid-template-columns:1fr}}
+@media(max-width:440px){
+  body{padding:14px 13px 50px}
+  .hero{grid-template-columns:1fr 1fr;gap:10px}
+  .tile .num{font-size:2.4rem}
+  header h1{font-size:1.1rem}
+  .drawer{width:100vw}
+}
+.panel{border:2px solid var(--ink);border-radius:var(--r);background:var(--card);
+  box-shadow:var(--shadow);padding:16px 18px}
+.feed{list-style:none;max-height:430px;overflow:auto}
+.feed li{display:flex;gap:10px;align-items:baseline;padding:7px 2px;
+  border-bottom:1px dashed rgba(23,32,59,.18);font-size:.82rem}
+.feed .t{font-family:var(--mono);font-size:.68rem;opacity:.6;flex:0 0 52px}
+.feed .k{font-family:var(--mono);font-size:.64rem;font-weight:700;padding:1px 7px;
+  border-radius:6px;border:1.5px solid var(--ink);flex-shrink:0}
+.k-prompt{background:var(--blue-soft)} .k-tool_use{background:var(--teal-soft)}
+.k-waiting_input{background:var(--orange)} .k-error{background:var(--coral-soft)}
+.k-completed{background:var(--lime)} .k-status_change,.k-ping{background:#F0EBDF}
+.feed .who{font-weight:600;flex-shrink:0}
+.feed .s{opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hours{display:flex;align-items:flex-end;gap:4px;height:150px;margin-top:14px}
+.hours .bar{flex:1;background:var(--blue);border:2px solid var(--ink);
+  border-radius:6px 6px 0 0;min-height:3px;position:relative;transition:height .5s ease}
+.hours .bar:hover::after{content:attr(data-tip);position:absolute;bottom:105%;left:50%;
+  transform:translateX(-50%);background:var(--ink);color:var(--bg);font-family:var(--mono);
+  font-size:.62rem;padding:2px 7px;border-radius:6px;white-space:nowrap;z-index:5}
+.axis{display:flex;justify-content:space-between;font-family:var(--mono);
+  font-size:.62rem;opacity:.6;margin-top:5px}
+.days{height:110px}
+.days .bar{background:var(--lav)}
+.axis.spread span{flex:1;text-align:center}
+
+/* drawer */
+.overlay{position:fixed;inset:0;background:rgba(23,32,59,.45);display:none;z-index:40}
+.overlay.open{display:block}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,94vw);z-index:50;
+  background:var(--bg);border-left:2px solid var(--ink);padding:20px;
+  transform:translateX(102%);transition:transform .22s ease;overflow:auto}
+.drawer.open{transform:none}
+.drawer h3{font-family:var(--display);margin-bottom:2px}
+.drawer .close{position:absolute;top:14px;right:14px;border:2px solid var(--ink);
+  background:var(--coral);color:#fff;border-radius:10px;width:34px;height:34px;
+  font-weight:700;box-shadow:var(--shadow);display:grid;place-items:center}
+.tl{list-style:none;margin-top:16px}
+.tl li{position:relative;padding:0 0 16px 22px;border-left:2px solid var(--ink);margin-left:6px}
+.tl li::before{content:'';position:absolute;left:-7px;top:2px;width:10px;height:10px;
+  border-radius:99px;background:var(--blue);border:2px solid var(--ink)}
+.tl li.k-waiting_input::before{background:var(--orange)}
+.tl li.k-completed::before{background:var(--lime)}
+.tl li.k-error::before{background:var(--coral)}
+.tl .t{font-family:var(--mono);font-size:.66rem;opacity:.6}
+.tl .s{font-size:.84rem}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="logo"><div class="mark"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg></div><h1>Agent Mission Control</h1></div>
+  <span id="conn" class="conn off">connecting</span>
+  <div class="spacer"></div>
+  <span id="clock" class="clock"></span>
+  <button id="bell" class="bell" aria-pressed="false" title="One click mutes all notifications">
+    <span id="bellIcon"></span><span id="bellText">Notifications on</span>
+  </button>
+</header>
+
+<section class="hero" aria-label="Live totals">
+  <div class="tile t-live"><div class="lbl">Agents live now</div>
+    <div class="num" id="nLive">0</div><div class="sub">working or waiting</div></div>
+  <div class="tile t-wait" id="tileWait"><div class="lbl">Waiting for input</div>
+    <div class="num" id="nWait">0</div><div class="sub">blocked on you, act first</div></div>
+  <div class="tile t-done"><div class="lbl">Completed today</div>
+    <div class="num" id="nDone">0</div><div class="sub">finished turns and sessions</div></div>
+  <div class="tile t-tools"><div class="lbl">Tool calls today</div>
+    <div class="num" id="nTools">0</div><div class="sub">edits, commands, searches</div></div>
+</section>
+
+<div class="filters" id="filters" role="group" aria-label="Filter sessions"></div>
+
+<h2><span class="dot" style="background:var(--blue)"></span>Sessions</h2>
+<div class="grid" id="grid"></div>
+<div class="empty" id="emptyState" hidden>
+  <b>No agent sessions yet.</b><br>
+  Start a Claude Code, Cursor, or Codex session, or test with
+  <code>python scripts/fake_agent.py</code>
+</div>
+
+<div class="cols">
+  <div class="panel">
+    <h2><span class="dot" style="background:var(--teal)"></span>Activity feed</h2>
+    <ul class="feed" id="feed"></ul>
+  </div>
+  <div class="panel">
+    <h2><span class="dot" style="background:var(--lime)"></span>Today by hour</h2>
+    <div class="hours" id="hours"></div>
+    <div class="axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+    <h2 style="margin-top:22px"><span class="dot" style="background:var(--lav)"></span>Last 7 days</h2>
+    <div class="hours days" id="days"></div>
+    <div class="axis" id="daysAxis"></div>
+  </div>
+</div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<aside class="drawer" id="drawer" aria-label="Session detail">
+  <button class="close" id="drawerClose" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  <h3 id="dTitle"></h3>
+  <div class="model" id="dMeta"></div>
+  <ul class="tl" id="dTimeline"></ul>
+</aside>
+
+<script>
+const $=s=>document.querySelector(s);
+let state=null, muted=localStorage.getItem('amc_muted')==='1';
+let agentFilter='all', statusFilter='all', prevStatus={};
+
+/* Lucide icons (lucide.dev, ISC) inlined so everything stays offline */
+const icon=p=>`<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const ICONS={
+  bell:icon('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'),
+  bellOff:icon('<path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5"/><path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/>'),
+  clock:icon('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
+};
+const STATUS_ICON={
+  working:icon('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>'),
+  idle:icon('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
+  waiting_input:icon('<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>'),
+  error:icon('<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'),
+  ended:icon('<path d="M20 6 9 17l-5-5"/>'),
+};
+
+/* ---------- bell ---------- */
+function renderBell(){
+  $('#bell').classList.toggle('muted',muted);
+  $('#bell').setAttribute('aria-pressed',muted);
+  $('#bellIcon').innerHTML=muted?ICONS.bellOff:ICONS.bell;
+  $('#bellText').textContent=muted?'Muted':'Notifications on';
+}
+$('#bell').onclick=()=>{
+  muted=!muted; localStorage.setItem('amc_muted',muted?'1':'0'); renderBell();
+  if(!muted && 'Notification' in window && Notification.permission==='default')
+    Notification.requestPermission();
+};
+renderBell();
+
+/* ---------- clock ---------- */
+setInterval(()=>{$('#clock').textContent=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})},1000);
+
+/* ---------- websocket with polling fallback ---------- */
+let wsAlive=false;
+function connect(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  const ws=new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen=()=>{wsAlive=true;$('#conn').textContent='live';$('#conn').classList.remove('off')};
+  ws.onmessage=e=>{state=JSON.parse(e.data);render()};
+  ws.onclose=()=>{wsAlive=false;$('#conn').textContent='polling';$('#conn').classList.add('off');
+    setTimeout(connect,4000)};
+}
+async function poll(){
+  if(!wsAlive){
+    try{const s=await fetch('/api/state').then(r=>r.json());
+      if(!wsAlive){ // ws may have (re)opened while the fetch was in flight
+        state=s;$('#conn').textContent='polling';render();
+      }}catch(e){}
+  }
+  setTimeout(poll,5000);
+}
+connect();poll();
+
+/* ---------- helpers ---------- */
+const STATUS_LABEL={working:'Working',idle:'Idle',waiting_input:'Waiting for you',
+  error:'Error',ended:'Ended'};
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function ago(sec){
+  if(sec<60)return Math.floor(sec)+'s';
+  if(sec<3600)return Math.floor(sec/60)+'m';
+  return Math.floor(sec/3600)+'h '+Math.floor(sec%3600/60)+'m';
+}
+function spark(events,sid,now){
+  const buckets=new Array(20).fill(0);
+  for(const e of events){ if(e.session_id!==sid)continue;
+    const age=now-e.ts; if(age>600)continue;
+    buckets[19-Math.min(19,Math.floor(age/30))]++; }
+  const max=Math.max(1,...buckets);
+  const pts=buckets.map((v,i)=>`${i*5},${22-(v/max)*20}`).join(' ');
+  return `<svg class="spark" width="100" height="24" viewBox="0 0 100 24" aria-hidden="true">
+    <polyline points="${pts}" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round"/></svg>`;
+}
+
+/* ---------- render ---------- */
+function render(){
+  if(!state)return;
+  const now=state.now, S=state.sessions, E=state.events;
+  const active=S.filter(s=>s.status!=='ended');
+  const live=S.filter(s=>['working','waiting_input'].includes(s.status));
+  const waiting=S.filter(s=>s.status==='waiting_input');
+  $('#nLive').textContent=live.length;
+  $('#nWait').textContent=waiting.length;
+  $('#tileWait').classList.toggle('hot',waiting.length>0);
+  $('#nDone').textContent=state.today.completed;
+  $('#nTools').textContent=state.today.tool_calls;
+
+  /* filter chips */
+  const agents=[...new Set(S.map(s=>s.agent_type))];
+  const chips=[['all','All agents']].concat(agents.map(a=>[a,a]));
+  const statuses=[['all','Any status'],['working','Working'],
+    ['waiting_input','Waiting'],['idle','Idle'],['ended','Ended']];
+  $('#filters').innerHTML=
+    chips.map(([v,l])=>`<button class="chip" data-f="agent" data-v="${esc(v)}"
+      aria-pressed="${agentFilter===v}">${esc(l)}</button>`).join('')+
+    statuses.map(([v,l])=>`<button class="chip" data-f="status" data-v="${v}"
+      aria-pressed="${statusFilter===v}">${l}</button>`).join('');
+
+  /* session cards: show non-ended plus recently ended (last 30 min) */
+  let shown=S.filter(s=>s.status!=='ended'||now-s.last_seen_at<1800);
+  if(agentFilter!=='all')shown=shown.filter(s=>s.agent_type===agentFilter);
+  if(statusFilter!=='all')shown=shown.filter(s=>s.status===statusFilter);
+  shown.sort((a,b)=>{
+    const rank={waiting_input:0,error:1,working:2,idle:3,ended:4};
+    return (rank[a.status]-rank[b.status])||(b.last_seen_at-a.last_seen_at);});
+  $('#emptyState').hidden=shown.length>0;
+  $('#grid').innerHTML=shown.map(s=>`
+    <button class="card s-${s.status}" data-sid="${esc(s.session_id)}">
+      <div class="row1">
+        <span class="badge b-${esc(s.agent_type)}">${esc(s.agent_type)}</span>
+        ${s.model?`<span class="model">${esc(s.model)}</span>`:''}
+        <span class="status-pill p-${s.status}">${STATUS_ICON[s.status]||''} ${STATUS_LABEL[s.status]||s.status}</span>
+      </div>
+      <div class="proj">${esc(s.project||s.session_id)}</div>
+      <div class="task">${esc(s.current_task||'No task reported yet')}</div>
+      <div class="meta">
+        <span class="elapsed">${ICONS.clock} ${ago(now-s.started_at)} · last ${ago(now-s.last_seen_at)} ago</span>
+        ${spark(E,s.session_id,now)}
+      </div>
+    </button>`).join('');
+
+  /* feed */
+  const sName=Object.fromEntries(S.map(s=>[s.session_id,s.project||s.agent_type]));
+  $('#feed').innerHTML=E.slice(0,80).map(e=>`
+    <li><span class="t">${new Date(e.ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
+    <span class="k k-${e.kind}">${e.kind.replace('_',' ')}</span>
+    <span class="who">${esc(sName[e.session_id]||'?')}</span>
+    <span class="s">${esc(e.summary)}</span></li>`).join('');
+
+  /* hours chart */
+  const hours=new Array(24).fill(0);
+  const dayStart=new Date(); dayStart.setHours(0,0,0,0);
+  for(const e of E){const d=new Date(e.ts*1000);
+    if(d>=dayStart)hours[d.getHours()]++;}
+  const hmax=Math.max(1,...hours);
+  $('#hours').innerHTML=hours.map((v,h)=>
+    `<div class="bar" style="height:${Math.max(3,v/hmax*100)}%"
+      data-tip="${String(h).padStart(2,'0')}:00 · ${v} events"></div>`).join('');
+
+  /* notifications on transitions */
+  for(const s of S){
+    const prev=prevStatus[s.session_id];
+    if(prev&&prev!==s.status&&['waiting_input','error'].includes(s.status))
+      notify(s);
+    prevStatus[s.session_id]=s.status;
+  }
+}
+/* ---------- 7-day chart ---------- */
+async function loadDaily(){
+  try{
+    const {days}=await fetch('/api/daily').then(r=>r.json());
+    const byDay={};
+    for(const r of days){
+      (byDay[r.d]=byDay[r.d]||{total:0,agents:[]});
+      byDay[r.d].total+=r.n; byDay[r.d].agents.push(`${r.agent} ${r.n}`);
+    }
+    const labels=[],bars=[];
+    for(let i=6;i>=0;i--){
+      const d=new Date(); d.setDate(d.getDate()-i);
+      const local=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const v=byDay[local];
+      labels.push(d.toLocaleDateString([],{weekday:'short'}));
+      bars.push({v:v?v.total:0,tip:v?v.agents.join(' · '):'no events'});
+    }
+    const max=Math.max(1,...bars.map(b=>b.v));
+    $('#days').innerHTML=bars.map(b=>
+      `<div class="bar" style="height:${Math.max(3,b.v/max*100)}%"
+        data-tip="${esc(b.tip)}"></div>`).join('');
+    $('#daysAxis').className='axis spread';
+    $('#daysAxis').innerHTML=labels.map(l=>`<span>${l}</span>`).join('');
+  }catch(e){}
+}
+loadDaily(); setInterval(loadDaily,60000);
+
+function notify(s){
+  if(muted||!('Notification' in window))return;
+  if(Notification.permission!=='granted')return;
+  new Notification(s.status==='error'?'Agent hit an error':'Agent needs your input',
+    {body:`${s.agent_type} · ${s.project||s.session_id}\n${s.current_task||''}`,
+     tag:s.session_id});
+}
+
+/* ---------- interactions ---------- */
+$('#filters').onclick=e=>{
+  const b=e.target.closest('.chip'); if(!b)return;
+  if(b.dataset.f==='agent')agentFilter=b.dataset.v; else statusFilter=b.dataset.v;
+  render();
+};
+$('#grid').onclick=async e=>{
+  const c=e.target.closest('.card'); if(!c)return;
+  const sid=c.dataset.sid;
+  const s=state.sessions.find(x=>x.session_id===sid);
+  $('#dTitle').textContent=s?(s.project||sid):sid;
+  $('#dMeta').textContent=s?`${s.agent_type}${s.model?' · '+s.model:''}${s.cwd?' · '+s.cwd:''}`:'';
+  $('#dTimeline').innerHTML='<li><span class="s">Loading…</span></li>';
+  $('#overlay').classList.add('open');$('#drawer').classList.add('open');
+  const r=await fetch(`/api/session/${encodeURIComponent(sid)}/events`).then(r=>r.json());
+  $('#dTimeline').innerHTML=r.events.map(ev=>`
+    <li class="k-${ev.kind}"><div class="t">${new Date(ev.ts*1000).toLocaleTimeString()}
+      · ${ev.kind.replace('_',' ')}</div>
+    <div class="s">${esc(ev.summary)}</div></li>`).join('')||'<li><span class="s">No events.</span></li>';
+};
+function closeDrawer(){$('#overlay').classList.remove('open');$('#drawer').classList.remove('open')}
+$('#overlay').onclick=closeDrawer;
+$('#drawerClose').onclick=closeDrawer;
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
+</script>
+</body>
+</html>

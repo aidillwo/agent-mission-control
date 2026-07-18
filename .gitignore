@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.DS_Store
+
+# runtime data, not source
+amc.db
+amc.db-shm
+amc.db-wal
+
+# per-machine hook backups created by install_hooks.py
+*.amc.bak
+
+# local Claude Code settings (per-user, not shared)
+.claude/settings.local.json
