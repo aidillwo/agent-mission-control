@@ -266,7 +266,7 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
 <script>
 const $=s=>document.querySelector(s);
 let state=null, muted=localStorage.getItem('amc_muted')==='1';
-let agentFilter='all', statusFilter='all', prevStatus={};
+let agentSel=new Set(), statusSel=new Set(), prevStatus={};
 
 /* Lucide icons (lucide.dev, ISC) inlined so everything stays offline */
 const icon=p=>`<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
@@ -361,20 +361,24 @@ function render(){
   const agents=[...new Set(S.map(s=>s.agent_type))]
     .sort((a,b)=>(a==='kiro')-(b==='kiro'));  // kiro chip last
   const chips=[['all','All agents']].concat(agents.map(a=>[a,a]));
-  const statuses=[['all','Any status'],['working','Working'],
+  const statuses=[['all','Any status'],['active','Active'],['working','Working'],
     ['waiting_input','Waiting'],['idle','Idle'],['ended','Ended']];
   $('#agentFilters').innerHTML=
     chips.map(([v,l])=>`<button class="chip" data-f="agent" data-v="${esc(v)}"
-      aria-pressed="${agentFilter===v}">${esc(l)}</button>`).join('');
+      aria-pressed="${v==='all'?agentSel.size===0:agentSel.has(v)}">${esc(l)}</button>`).join('');
   $('#statusFilters').innerHTML=
     statuses.map(([v,l])=>`<button class="chip" data-f="status" data-v="${v}"
-      aria-pressed="${statusFilter===v}">${l}</button>`).join('');
+      aria-pressed="${v==='all'?statusSel.size===0:statusSel.has(v)}">${l}</button>`).join('');
 
   /* session cards: only those active within the last 3 days */
   const ACTIVE_WINDOW=3*86400;
   let shown=S.filter(s=>now-s.last_seen_at<=ACTIVE_WINDOW);
-  if(agentFilter!=='all')shown=shown.filter(s=>s.agent_type===agentFilter);
-  if(statusFilter!=='all')shown=shown.filter(s=>s.status===statusFilter);
+  if(agentSel.size)shown=shown.filter(s=>agentSel.has(s.agent_type));
+  if(statusSel.size)shown=shown.filter(s=>{
+    for(const f of statusSel)
+      if(f==='active'?s.status!=='ended':s.status===f)return true;
+    return false;
+  });
   shown.sort((a,b)=>{
     const rank={waiting_input:0,error:1,working:2,idle:3,ended:4};
     const arank=s=>s.agent_type==='kiro'?1:0;  // kiro least-used: sink to bottom within a status group
@@ -477,7 +481,9 @@ function notify(s){
 /* ---------- interactions ---------- */
 $('#filters').onclick=e=>{
   const b=e.target.closest('.chip'); if(!b)return;
-  if(b.dataset.f==='agent')agentFilter=b.dataset.v; else statusFilter=b.dataset.v;
+  const v=b.dataset.v, sel=b.dataset.f==='agent'?agentSel:statusSel;
+  if(v==='all')sel.clear();
+  else sel.has(v)?sel.delete(v):sel.add(v);
   render();
 };
 $('#grid').onclick=async e=>{
