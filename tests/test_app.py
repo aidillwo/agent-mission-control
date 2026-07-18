@@ -1,4 +1,4 @@
-"""Tests for Agent Mission Control. Run: .venv/bin/pytest -q"""
+"""Tests for Agent Deck. Run: .venv/bin/pytest -q"""
 import asyncio
 import importlib
 import sys

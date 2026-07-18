@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wire Claude Code, Cursor, and Codex to Agent Mission Control.
+"""Wire Claude Code, Cursor, and Codex to Agent Deck.
 
 Idempotent: safe to run twice. Backs up every file it touches to <file>.amc.bak
 the first time. Run on each MacBook after cloning:
@@ -134,7 +134,7 @@ def install_kiro():
 
 
 if __name__ == "__main__":
-    print(f"Agent Mission Control installer (dry-run={DRY})\n")
+    print(f"Agent Deck installer (dry-run={DRY})\n")
     install_claude_code()
     install_cursor()
     install_codex()

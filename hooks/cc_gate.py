@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude Code PreToolUse gate for Agent Mission Control.
+"""Claude Code PreToolUse gate for Agent Deck.
 
 Installed as the PreToolUse hook. Reads the hook JSON from stdin and asks the
 dashboard whether this session is gated. If it is, the dashboard blocks until
@@ -24,8 +24,8 @@ def emit(decision):
         "hookEventName": "PreToolUse",
         "permissionDecision": decision,
         "permissionDecisionReason":
-            "Approved from Mission Control" if decision == "allow"
-            else "Denied from Mission Control"}}))
+            "Approved from Agent Deck" if decision == "allow"
+            else "Denied from Agent Deck"}}))
 
 
 def main():

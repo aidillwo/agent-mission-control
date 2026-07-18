@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cursor agent hook forwarder for Agent Mission Control.
+# Cursor agent hook forwarder for Agent Deck.
 # Usage in ~/.cursor/hooks.json: command = "/path/to/cursor_hook.sh <eventName>"
 #
 # For shell/MCP executions it asks the dashboard for an allow/deny decision

@@ -1,4 +1,4 @@
-"""Agent Mission Control - local AI agent session monitor.
+"""Agent Deck - local AI agent session monitor.
 
 Run: python app.py   (serves http://localhost:7777)
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Kiro agent-hook forwarder for Agent Mission Control (beta).
+# Kiro agent-hook forwarder for Agent Deck (beta).
 # Point a Kiro Agent Hook at this script, passing the event name as $1:
 #   /path/to/kiro_hook.sh <eventName>
 # Reads Kiro's JSON from stdin, forwards it to the local dashboard in the

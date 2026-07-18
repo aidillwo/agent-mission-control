@@ -1,4 +1,4 @@
-# Agent Mission Control
+# Agent Deck
 
 A local dashboard that shows every AI coding agent session running on your Mac:
 what each one is working on, how many are live, which model and project, and
@@ -125,7 +125,7 @@ permanently. Only an explicit Deny stops an action.
 
 `scripts/amc.5s.sh` is a SwiftBar/xbar plugin. Install
 [SwiftBar](https://github.com/swiftbar/SwiftBar), drop the script in your
-plugins folder, and the menu bar shows `AMC 3●` with a `!` when something is
+plugins folder, and the menu bar shows `Deck 3●` with a `!` when something is
 waiting. Reads the same `/summary` endpoint the dashboard uses.
 
 The notch overlay idea is a later, separate native app. It will read `/summary`
