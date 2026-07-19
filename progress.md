@@ -76,8 +76,20 @@ _Last updated: 2026-07-19_
   when browser-notification permission is denied. Feature-detected + try/catch —
   purely additive, can't break the dashboard. Verified live (chime fires via
   `notify()` on transition, mute suppresses, no console errors).
-- **Tests**: 44 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
-  +3 bash-prefix (and `test_always_appends_rule` updated to the prefix form).
+- **Localhost ports page** (spec `2026-07-19-localhost-ports-page-design.md`) —
+  a second page at `/ports` (new `static/ports.html`, header nav links Agents ↔
+  Ports on both) listing every localhost TCP listener the user owns, enriched per
+  PID with app name, project (from `cwd`), framework guess, memory, uptime.
+  `scan_ports()` uses `lsof -nP -iTCP -sTCP:LISTEN` (works without sudo;
+  `psutil.net_connections` needs root on macOS) + psutil; `GET /api/ports` is a
+  sync path op (threadpool), scanned on demand — the page polls every 4s only
+  while visible. Each port renders as a link that opens `localhost:<port>` in a
+  new tab; own server badged "this dashboard". **Read-only this pass — kill
+  deferred** (next: `POST /api/ports/{pid}/kill` behind a confirm). Verified
+  live: 5 servers / 1 project / 9 ports, correct self/project/app classification,
+  "Projects only" filter, port links, no console errors.
+- **Tests**: 47 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
+  +3 bash-prefix (and `test_always_appends_rule` updated), +3 ports.
   Notification sound is frontend-only (no server surface) — verified live.
 - **Specs** committed under `docs/superpowers/specs/`.
 
@@ -108,7 +120,11 @@ _Last updated: 2026-07-19_
    names are guesses).
 4. ~~**Bash `prefix:*` "Always" rules**~~ — DONE (`safe_bash_prefix` +
    compound-command gate hardening). Extend the allowlists in `app.py` as needed.
-5. **Notch / menu-bar native app** — deferred; SwiftBar plugin covers ~80%.
+5. **Kill-port action on the Ports page** — the page shipped read-only (user's
+   call). Add `POST /api/ports/{pid}/kill` (SIGTERM→SIGKILL) + a confirm dialog
+   showing app/project/command; guard killing our own 7777 server (warn "kills
+   this page"). Spec §Decisions(4) in `2026-07-19-localhost-ports-page-design.md`.
+6. **Notch / menu-bar native app** — deferred; SwiftBar plugin covers ~80%.
    This is the surface that could eventually answer already-shown terminal
    prompts (keystroke injection) — explicitly out of scope for now.
 

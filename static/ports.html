@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Deck · Ports</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232450FF'/%3E%3Cg fill='none' stroke='%23FFFFFF' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' transform='translate(6 6)'%3E%3Ccircle cx='10' cy='10' r='9'/%3E%3Cpath d='M10 5v5l3 3'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Archivo:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#FFF9F0; --ink:#17203B; --card:#FFFFFF; --line:#17203B;
+  --blue:#2450FF; --blue-soft:#DDE5FF;
+  --lime:#C6F432; --lime-deep:#4C9A1D;
+  --orange:#FF8A00; --orange-soft:#FFE8CC;
+  --coral:#FF4D5E; --coral-soft:#FFDDE0;
+  --lav:#B49CFF; --lav-soft:#EDE6FF;
+  --teal:#23C4B4; --teal-soft:#D5F6F2;
+  --r:14px; --shadow:4px 4px 0 var(--ink);
+  --display:'Space Grotesk',system-ui,sans-serif;
+  --body:'Archivo',system-ui,sans-serif;
+  --mono:'Space Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+.icon{width:1.1em;height:1.1em;flex-shrink:0;vertical-align:-.18em}
+html,body{max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);
+  font-size:15px;line-height:1.45;padding:20px 22px 60px}
+button{font:inherit;cursor:pointer;color:inherit}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:1280px;margin:0 auto}
+
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+.logo{display:flex;align-items:center;gap:10px}
+.logo .mark{width:34px;height:34px;border:2px solid var(--ink);border-radius:9px;
+  background:var(--blue);box-shadow:var(--shadow);display:grid;place-items:center;
+  color:#fff}
+h1{font-family:var(--display);font-weight:700;font-size:1.35rem;letter-spacing:-.01em}
+.nav{display:flex;gap:8px;margin-left:6px}
+.nav a{font-family:var(--display);font-weight:600;font-size:.8rem;padding:6px 13px;
+  border:2px solid var(--ink);border-radius:99px;background:var(--card)}
+.nav a.on{background:var(--blue);color:#fff;box-shadow:var(--shadow)}
+.spacer{flex:1}
+.scanned{font-family:var(--mono);font-size:.72rem;opacity:.7}
+.btn{border:2px solid var(--ink);border-radius:12px;background:var(--card);
+  box-shadow:var(--shadow);padding:7px 13px;display:flex;gap:8px;align-items:center;
+  font-weight:600;font-size:.85rem;transition:transform .08s}
+.btn:active{transform:translate(2px,2px);box-shadow:none}
+.btn.on{background:var(--lime)}
+
+.hero{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px}
+.tile{border:2px solid var(--ink);border-radius:var(--r);background:var(--card);
+  box-shadow:var(--shadow);padding:16px 18px}
+.tile .lbl{font-family:var(--mono);font-size:.68rem;text-transform:uppercase;
+  letter-spacing:.08em;opacity:.7}
+.tile .num{font-family:var(--display);font-weight:700;font-size:2rem;line-height:1.1;margin-top:4px}
+.tile.t1{background:var(--blue-soft)} .tile.t2{background:var(--teal-soft)}
+.tile.t3{background:var(--lav-soft)}
+
+h2{font-family:var(--display);font-weight:700;font-size:1.05rem;margin-bottom:12px;
+  display:flex;align-items:center;gap:8px}
+.dot{width:11px;height:11px;border-radius:50%;border:2px solid var(--ink);display:inline-block}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+.card{border:2px solid var(--ink);border-radius:var(--r);background:var(--card);
+  box-shadow:var(--shadow);padding:15px 16px;min-width:0;border-left-width:6px;
+  border-left-color:var(--lav)}
+.card.proj{border-left-color:var(--blue)}
+.card.self{border-left-color:var(--lime-deep);background:#FBFFF0}
+.card .row1{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.card .app{font-family:var(--display);font-weight:700;font-size:1.05rem}
+.tag{font-family:var(--mono);font-size:.64rem;padding:2px 8px;border:2px solid var(--ink);
+  border-radius:99px;text-transform:uppercase;letter-spacing:.05em}
+.tag.fw{background:var(--teal-soft)} .tag.proj{background:var(--blue-soft)}
+.tag.sys{background:var(--lav-soft);opacity:.85} .tag.self{background:var(--lime)}
+.ports{display:flex;gap:7px;flex-wrap:wrap;margin:4px 0 10px}
+.port{font-family:var(--mono);font-weight:700;font-size:.82rem;padding:6px 11px;
+  border:2px solid var(--ink);border-radius:10px;background:var(--orange-soft);
+  box-shadow:2px 2px 0 var(--ink);transition:transform .08s;display:inline-flex;gap:5px;align-items:center}
+.port:hover{background:var(--orange);color:#fff}
+.port:active{transform:translate(2px,2px);box-shadow:none}
+.card .meta{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);
+  font-size:.7rem;opacity:.72}
+.card .cmd{font-family:var(--mono);font-size:.68rem;opacity:.6;margin-top:8px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.empty{border:2px dashed var(--ink);border-radius:var(--r);padding:40px;text-align:center;
+  opacity:.75;font-size:1rem}
+.hint{font-family:var(--mono);font-size:.72rem;opacity:.6;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="logo"><div class="mark"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div><h1>Agent Deck</h1></div>
+  <nav class="nav"><a href="/">Agents</a><a href="/ports" class="on">Ports</a></nav>
+  <div class="spacer"></div>
+  <span id="scanned" class="scanned">scanning…</span>
+  <button id="filterBtn" class="btn" aria-pressed="false" title="Hide macOS/GUI apps, show only project servers">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
+    <span>All</span>
+  </button>
+  <button id="refreshBtn" class="btn" title="Rescan now">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+    <span>Refresh</span>
+  </button>
+</header>
+
+<section class="hero" aria-label="Totals">
+  <div class="tile t1"><div class="lbl">Servers listening</div><div class="num" id="nServers">0</div></div>
+  <div class="tile t2"><div class="lbl">Projects</div><div class="num" id="nProjects">0</div></div>
+  <div class="tile t3"><div class="lbl">Open ports</div><div class="num" id="nPorts">0</div></div>
+</section>
+
+<h2><span class="dot" style="background:var(--blue)"></span>Localhost servers</h2>
+<div class="grid" id="grid"></div>
+<div class="empty" id="emptyState" hidden>No localhost servers listening (that you own).</div>
+<div class="hint">Click a port to open <code>localhost:&lt;port&gt;</code> in a new tab. Read-only for now — a kill-port action is coming next. Only your own processes are shown (no sudo).</div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+let hideSystem=false, timer=null;
+
+function esc(s){return (s??'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function fmtUptime(s){
+  if(s==null)return '';
+  s=Math.floor(s); const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  if(d)return `${d}d ${h}h`; if(h)return `${h}h ${m}m`; if(m)return `${m}m`; return `${s}s`;
+}
+
+function render(data){
+  const servers=(data.servers||[]).filter(s=>!hideSystem||s.project_like);
+  $('#nServers').textContent=data.counts.servers;
+  $('#nProjects').textContent=data.counts.projects;
+  $('#nPorts').textContent=data.counts.ports;
+  const t=new Date((data.scanned_at||Date.now()/1000)*1000);
+  $('#scanned').textContent='scanned '+t.toLocaleTimeString();
+  $('#emptyState').hidden=servers.length>0;
+  $('#grid').innerHTML=servers.map(s=>{
+    const cls=s.is_self?'self':(s.project_like?'proj':'');
+    const badge=s.is_self?'<span class="tag self">this dashboard</span>'
+      :s.project_like?`<span class="tag proj">${esc(s.project)}</span>`
+      :'<span class="tag sys">app / system</span>';
+    const fw=s.framework?`<span class="tag fw">${esc(s.framework)}</span>`:'';
+    const chips=s.ports.map(p=>
+      `<a class="port" href="http://localhost:${p}" target="_blank" rel="noopener" title="Open localhost:${p}">:${p}
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg></a>`).join('');
+    const meta=[`PID ${s.pid}`, s.mem_mb!=null?`${s.mem_mb} MB`:null, s.uptime_s!=null?`up ${fmtUptime(s.uptime_s)}`:null]
+      .filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join('');
+    return `<div class="card ${cls}">
+      <div class="row1"><span class="app">${esc(s.app)}</span>${fw}${badge}</div>
+      <div class="ports">${chips}</div>
+      <div class="meta">${meta}</div>
+      <div class="cmd" title="${esc(s.cmd)}">${esc(s.cmd)}</div>
+    </div>`;
+  }).join('');
+}
+
+async function scan(){
+  try{
+    const data=await fetch('/api/ports').then(r=>r.json());
+    render(data);
+  }catch(e){ $('#scanned').textContent='scan failed'; }
+}
+
+$('#refreshBtn').onclick=scan;
+$('#filterBtn').onclick=()=>{
+  hideSystem=!hideSystem;
+  $('#filterBtn').classList.toggle('on',hideSystem);
+  $('#filterBtn').setAttribute('aria-pressed',hideSystem);
+  $('#filterBtn').querySelector('span').textContent=hideSystem?'Projects':'All';
+  scan();
+};
+
+function loop(){ clearInterval(timer); timer=setInterval(()=>{ if(!document.hidden)scan(); },4000); }
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden)scan(); });
+scan(); loop();
+</script>
+</body>
+</html>

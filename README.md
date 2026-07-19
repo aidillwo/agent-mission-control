@@ -184,11 +184,28 @@ too, so nothing here needs to change for it.
 
 ---
 
+## Localhost ports
+
+A second page at **`/ports`** (linked from the header nav) lists every localhost
+server listening on your Mac — the app or project behind each port, its PID,
+memory, and uptime. It answers "what's on port 5000?" and "which of my dev
+servers are still running?" at a glance. **Click any port to open
+`localhost:<port>` in a new tab.** A "Projects only" toggle hides macOS/GUI apps
+so you see just your own dev servers; your Agent Deck server is badged.
+
+It uses `lsof` (no `sudo`), so it shows **only your own processes** — exactly the
+dev servers you care about; root-owned listeners don't appear. The scan runs
+on demand (the page polls every few seconds only while open), so it costs
+nothing when you're not looking. Read-only for now; a kill-port button is the
+next addition.
+
 ## Endpoints
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /` | Dashboard |
+| `GET /` | Agent dashboard |
+| `GET /ports` | Localhost ports page |
+| `GET /api/ports` | Localhost TCP listeners, enriched (app, project, ports, mem, uptime) |
 | `GET /api/state` | Full state snapshot (also the polling fallback) |
 | `GET /api/session/{id}/events` | One session's full timeline |
 | `GET /api/daily` | Events per day per agent, last 7 days (feeds the 7-day panel) |

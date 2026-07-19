@@ -107,6 +107,18 @@ token/cost estimates, daily digests.
     audio file to keep the "everything local, no external assets" rule; fires
     even when Notification permission is denied, since a missed popup was the
     original complaint.
+16. **Localhost ports page** (spec `2026-07-19-localhost-ports-page-design.md`)
+    — a second page (`/ports`) listing localhost servers with what app/project
+    each is, so the user can see what's running and open any port. Verified the
+    hinge before building: `psutil.net_connections` is AccessDenied without root
+    on macOS, but `lsof` as the user works (~33ms) and `proc.cwd()` gives the
+    project — so it's feasible and cheap. Kept a **separate page** (user's
+    instinct) because it's really a generic port manager, not agent-specific;
+    scanned on demand (sync endpoint → threadpool, page polls only while
+    visible) so it adds zero background cost. Shipped **read-only** at the
+    user's request; kill-port deferred to a later pass with a confirm dialog.
+    Uses `lsof` not sudo, so only the user's own processes appear (the right
+    scope for their dev servers).
 
 ## Style / working preferences observed
 

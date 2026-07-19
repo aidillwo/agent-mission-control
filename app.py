@@ -19,6 +19,7 @@ import os
 import re
 import shlex
 import sqlite3
+import subprocess
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -961,6 +962,94 @@ async def process_scan():
             await hub.broadcast()
         await asyncio.sleep(15)
 
+# ---------------------------------------------------------------- localhost ports
+
+_LISTEN_RE = re.compile(r":(\d+)\s*\(LISTEN\)\s*$")
+
+def parse_lsof_listeners(text):
+    """Map {pid: {ports}} from `lsof -nP -iTCP -sTCP:LISTEN` output. Handles the
+    IPv4 `127.0.0.1:PORT`, wildcard `*:PORT`, and IPv6 `[::1]:PORT` name forms."""
+    out = {}
+    for line in text.splitlines()[1:]:  # skip header
+        parts = line.split()
+        if len(parts) < 2 or not parts[1].isdigit():
+            continue
+        m = _LISTEN_RE.search(line)
+        if not m:
+            continue
+        out.setdefault(int(parts[1]), set()).add(int(m.group(1)))
+    return out
+
+_FRAMEWORKS = [
+    ("vite", "Vite"), ("next", "Next.js"), ("react-scripts", "CRA"),
+    ("webpack", "Webpack"), ("nuxt", "Nuxt"), ("astro", "Astro"),
+    ("ng serve", "Angular"), ("@angular", "Angular"), ("svelte", "Svelte"),
+    ("uvicorn", "Uvicorn"), ("gunicorn", "Gunicorn"), ("hypercorn", "Hypercorn"),
+    ("fastapi", "FastAPI"), ("flask", "Flask"), ("django", "Django"),
+    ("http.server", "http.server"), ("rails", "Rails"), ("puma", "Puma"),
+    ("jekyll", "Jekyll"), ("hugo", "Hugo"), ("php", "PHP"),
+    ("nodemon", "nodemon"), ("vercel", "Vercel"), ("storybook", "Storybook"),
+]
+
+def framework_guess(cmdline):
+    low = (cmdline or "").lower()
+    for needle, label in _FRAMEWORKS:
+        if needle in low:
+            return label
+    return None
+
+def scan_ports():
+    """List localhost TCP listeners owned by this user, enriched per PID. Uses
+    lsof (works without sudo; psutil.net_connections needs root on macOS) for the
+    pid->ports map, then psutil for display data. Blocking — call off the loop."""
+    empty = {"scanned_at": time.time(), "servers": [],
+             "counts": {"servers": 0, "projects": 0, "ports": 0}}
+    try:
+        import psutil
+    except ImportError:
+        return empty
+    try:
+        text = subprocess.run(
+            ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"],
+            capture_output=True, text=True, timeout=8).stdout
+    except Exception:
+        return empty
+    self_pid = os.getpid()
+    servers, projects, nports = [], set(), 0
+    for pid, ports in parse_lsof_listeners(text).items():
+        try:
+            p = psutil.Process(pid)
+        except Exception:
+            continue
+        def safe(fn, default=None):
+            try:
+                return fn()
+            except Exception:
+                return default
+        cmd = " ".join(safe(p.cmdline, []) or [])
+        cwd = safe(p.cwd)
+        mem = safe(lambda: p.memory_info().rss // 1024 // 1024)
+        created = safe(p.create_time)
+        # cwd is the reliable signal: GUI/system apps run from "/" (or deny cwd),
+        # a dev server runs from its project dir. Don't use the cmdline — the
+        # framework Python interpreter lives under Python.app/Contents/.
+        project_like = bool(cwd and cwd not in ("/", str(HOME)))
+        project = Path(cwd).name if project_like else None
+        if project:
+            projects.add(project)
+        nports += len(ports)
+        servers.append({
+            "pid": pid, "app": safe(p.name) or "?", "cmd": cmd[:200],
+            "cwd": cwd, "project": project, "project_like": project_like,
+            "framework": framework_guess(cmd),
+            "mem_mb": mem, "uptime_s": (time.time() - created) if created else None,
+            "ports": sorted(ports), "is_self": pid == self_pid})
+    servers.sort(key=lambda s: (not s["is_self"], not s["project_like"],
+                                min(s["ports"])))
+    return {"scanned_at": time.time(), "servers": servers,
+            "counts": {"servers": len(servers), "projects": len(projects),
+                       "ports": nports}}
+
 # ---------------------------------------------------------------- app
 
 @asynccontextmanager
@@ -998,6 +1087,11 @@ app = FastAPI(lifespan=lifespan)
 def index():
     # no-cache so a plain reload always picks up dashboard upgrades
     return FileResponse(HERE / "static" / "index.html",
+                        headers={"Cache-Control": "no-cache"})
+
+@app.get("/ports")
+def ports_page():
+    return FileResponse(HERE / "static" / "ports.html",
                         headers={"Cache-Control": "no-cache"})
 
 @app.post("/ingest")
@@ -1077,6 +1171,12 @@ def api_daily():
             "FROM events e JOIN sessions s ON s.session_id=e.session_id "
             "WHERE ts>=? GROUP BY d, agent ORDER BY d", (since,))]
     return {"days": rows}
+
+@app.get("/api/ports")
+def api_ports():
+    # sync def => FastAPI runs it in a threadpool, so the blocking lsof scan
+    # never stalls the event loop. Scanned on demand (page polls while visible).
+    return scan_ports()
 
 @app.get("/summary")
 def summary():

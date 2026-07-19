@@ -37,6 +37,10 @@ header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22p
   background:var(--blue);box-shadow:var(--shadow);display:grid;place-items:center;
   color:#fff;font-family:var(--mono);font-weight:700;font-size:15px}
 h1{font-family:var(--display);font-weight:700;font-size:1.35rem;letter-spacing:-.01em}
+.nav{display:flex;gap:8px}
+.nav a{font-family:var(--display);font-weight:600;font-size:.8rem;padding:6px 13px;
+  border:2px solid var(--ink);border-radius:99px;background:var(--card);text-decoration:none}
+.nav a.on{background:var(--blue);color:#fff;box-shadow:var(--shadow)}
 .conn{font-family:var(--mono);font-size:.72rem;padding:4px 10px;border:2px solid var(--ink);
   border-radius:99px;background:var(--lime)}
 .conn.off{background:var(--coral-soft)}
@@ -221,6 +225,7 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
 <div class="wrap">
 <header>
   <div class="logo"><div class="mark"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg></div><h1>Agent Deck</h1></div>
+  <nav class="nav"><a href="/" class="on">Agents</a><a href="/ports">Ports</a></nav>
   <span id="conn" class="conn off">connecting</span>
   <div class="spacer"></div>
   <span id="clock" class="clock"></span>

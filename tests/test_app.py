@@ -430,6 +430,35 @@ def test_always_rule_falls_back_to_exact_for_unsafe(fresh_db, tmp_path):
     assert body["rule"] == "Bash(git push origin main)"  # exact, no prefix
 
 
+# ---------------------------------------------------------------- localhost ports
+
+def test_parse_lsof_listeners():
+    sample = ("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
+              "node 111 me 25u IPv6 0x1 0t0 TCP *:11470 (LISTEN)\n"
+              "node 111 me 26u IPv6 0x2 0t0 TCP *:12470 (LISTEN)\n"
+              "Python 222 me 9u IPv4 0x3 0t0 TCP 127.0.0.1:7777 (LISTEN)\n"
+              "vite 222 me 9u IPv6 0x4 0t0 TCP [::1]:5173 (LISTEN)\n"
+              "junk line without a port\n")
+    got = {pid: sorted(ports) for pid, ports in amc.parse_lsof_listeners(sample).items()}
+    assert got == {111: [11470, 12470], 222: [5173, 7777]}
+
+
+def test_framework_guess():
+    assert amc.framework_guess("/x/node_modules/.bin/vite dev") == "Vite"
+    assert amc.framework_guess("uvicorn main:app --reload") == "Uvicorn"
+    assert amc.framework_guess("next dev -p 3000") == "Next.js"
+    assert amc.framework_guess("python app.py") is None
+
+
+def test_ports_page_and_api(client):
+    r = client.get("/ports")
+    assert r.status_code == 200 and "<html" in r.text.lower()
+    data = client.get("/api/ports").json()
+    assert set(data) >= {"scanned_at", "servers", "counts"}
+    assert set(data["counts"]) == {"servers", "projects", "ports"}
+    assert isinstance(data["servers"], list)
+
+
 def test_prefix_rule_not_trusted_for_compound(fresh_db, tmp_path, monkeypatch):
     monkeypatch.setattr(amc, "HOME", tmp_path / "nohome")
     amc._rules_cache.clear()
