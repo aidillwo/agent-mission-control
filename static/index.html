@@ -216,6 +216,8 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
   font-family:var(--mono);font-size:.74rem}
 .hist td:first-child{font-family:var(--body);font-weight:600;font-size:.78rem}
 .hist .cost{color:var(--lime-deep);font-weight:700}
+.hist-sub{font-family:var(--display);font-weight:700;font-size:.78rem;
+  text-transform:uppercase;letter-spacing:.04em;margin-top:18px;opacity:.75}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
@@ -284,6 +286,20 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
   <button class="close" id="histClose" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
   <h3>History</h3>
   <div class="model">last 30 days · costs are estimates</div>
+
+  <div class="hist-sub">Tokens by agent</div>
+  <table class="hist" id="histByAgent">
+    <thead><tr><th>Agent</th><th>In</th><th>Out</th><th>Est&nbsp;cost</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="hist-sub">Tokens by provider</div>
+  <table class="hist" id="histByProvider">
+    <thead><tr><th>Provider</th><th>In</th><th>Out</th><th>Est&nbsp;cost</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="hist-sub">By day</div>
   <table class="hist" id="histTable">
     <thead><tr><th>Day</th><th>Events</th><th>Tools</th><th>Done</th><th>Tokens</th><th>Est&nbsp;cost</th></tr></thead>
     <tbody></tbody>
@@ -574,19 +590,33 @@ function notify(s){
 
 /* ---------- history drawer ---------- */
 $('#histIcon').innerHTML=ICONS.history;
+function costCell(c){return c!=null?'$'+c.toFixed(2):'—';}
+function tokenRows(rows,nameKey){
+  return rows.map(r=>`<tr>
+    <td>${esc(r[nameKey])}</td>
+    <td>${fmtTokens(r.tokens_in)}</td><td>${fmtTokens(r.tokens_out)}</td>
+    <td class="cost">${costCell(r.est_cost)}</td>
+  </tr>`).join('')||'<tr><td colspan="4">No usage yet.</td></tr>';
+}
 async function openHistory(){
   $('#overlay').classList.add('open');$('#histDrawer').classList.add('open');
-  const tb=$('#histTable tbody');
+  const tb=$('#histTable tbody'), ab=$('#histByAgent tbody'), pb=$('#histByProvider tbody');
   tb.innerHTML='<tr><td colspan="6">Loading…</td></tr>';
+  ab.innerHTML=pb.innerHTML='<tr><td colspan="4">Loading…</td></tr>';
   try{
-    const {days}=await fetch('/api/history?days=30').then(r=>r.json());
+    const {days,by_agent,by_provider}=await fetch('/api/history?days=30').then(r=>r.json());
     tb.innerHTML=days.map(d=>`<tr>
       <td title="${esc((d.agents||[]).join(', '))}">${esc(d.day)}</td>
       <td>${d.events}</td><td>${d.tool_calls}</td><td>${d.completed}</td>
       <td>${fmtTokens(d.tokens_in+d.tokens_out)}</td>
-      <td class="cost">${d.est_cost!=null?'$'+d.est_cost.toFixed(2):'—'}</td>
+      <td class="cost">${costCell(d.est_cost)}</td>
     </tr>`).join('')||'<tr><td colspan="6">No history yet.</td></tr>';
-  }catch(e){tb.innerHTML='<tr><td colspan="6">Failed to load.</td></tr>';}
+    ab.innerHTML=tokenRows(by_agent||[],'agent');
+    pb.innerHTML=tokenRows(by_provider||[],'provider');
+  }catch(e){
+    tb.innerHTML='<tr><td colspan="6">Failed to load.</td></tr>';
+    ab.innerHTML=pb.innerHTML='<tr><td colspan="4">Failed to load.</td></tr>';
+  }
 }
 $('#histBtn').onclick=openHistory;
 $('#histClose').onclick=()=>{$('#overlay').classList.remove('open');$('#histDrawer').classList.remove('open')};

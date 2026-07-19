@@ -16,9 +16,17 @@ Kiro (beta), and your own Python bots or ETL jobs.
 
 ```bash
 cd agent-mission-control
-python3 -m pip install -r requirements.txt
-python3 app.py                 # serves http://localhost:7777
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python app.py        # serves http://localhost:7777
 ```
+
+The venv isn't optional busywork — recent macOS Python (Homebrew installs in
+particular) refuses a bare `pip install` with `externally-managed-environment`.
+A venv sidesteps that everywhere, and it's what `install_hooks.py --launchd`
+(auto-start on login, see below) expects to find. `app.py` is the only thing
+that needs it; `install_hooks.py` and `fake_agent.py` below are plain stdlib,
+so any `python3` works for them.
 
 Open http://localhost:7777. Then wire your agents once:
 
@@ -34,8 +42,8 @@ Test it without any real agent:
 python3 scripts/fake_agent.py  # two demo sessions animate on the dashboard
 ```
 
-Run on your second MacBook the same way: copy the folder, `pip install`,
-`python3 install_hooks.py`. Each machine is independent.
+Run on your second MacBook the same way: copy the folder, create a `.venv`,
+`pip install`, `install_hooks.py`. Each machine is independent.
 
 ---
 
@@ -153,16 +161,20 @@ one that already fell through. The card staying orange is your cue.
 
 ## History, tokens & cost
 
-The **History** button in the header shows a per-day digest of the last 30
-days: events, tool calls, completions, tokens, and an estimated cost. The
-"Tokens today" tile shows the running total.
+The **History** button in the header opens a drawer with three views over the
+last 30 days: **tokens by agent** (Claude Code / Codex / Cursor / custom),
+**tokens by provider** (Anthropic / OpenAI / Other, derived from the model
+name — a Cursor or custom session can run either vendor's model, so provider
+is tracked separately from which tool ran it), and the original **per-day**
+digest of events, tool calls, completions, and tokens. The "Tokens today" tile
+shows the running total.
 
 Token usage is collected automatically from Claude Code transcripts and Codex
 rollout logs (beta), and from custom bots that report `tokens_in`/`tokens_out`
 on `/ingest`. Costs are **estimates** from the static `PRICES` table at the
 top of `app.py` (USD per MTok, substring-matched on model name) — edit it when
 prices change. Cache discounts are not modeled; unknown models show tokens
-without a cost.
+without a cost, and group under "Other" in the by-provider view.
 
 ## Retention
 
@@ -217,7 +229,7 @@ enforces all of this server-side too, not just in the UI.
 | `GET /api/state` | Full state snapshot (also the polling fallback) |
 | `GET /api/session/{id}/events` | One session's full timeline |
 | `GET /api/daily` | Events per day per agent, last 7 days (feeds the 7-day panel) |
-| `GET /api/history?days=30` | Per-day digest: events, tool calls, tokens, est. cost |
+| `GET /api/history?days=30` | Per-day digest + token totals by agent and by provider |
 | `GET /summary` | Compact counts for menu bar / notch |
 | `WS /ws` | Live push |
 | `POST /ingest` | Generic webhook |
@@ -267,8 +279,8 @@ reference copy only; don't load it directly.
 ## Tests
 
 ```bash
-python3 -m pip install pytest httpx
-pytest -q
+.venv/bin/pip install pytest httpx
+.venv/bin/pytest -q
 ```
 
 Covers status derivation, the intake normalizers, log-tailer rotation

@@ -101,7 +101,10 @@ Dev server via Claude Code preview: launch config `amc` in `.claude/launch.json`
   three server-side guards (`self`/`system`/`not_listening`) mirror the UI,
   which shows the kill button only on project, non-self cards.
 - **Usage/cost**: `daily_usage` table fed by tailers + webhook; `PRICES`
-  table in app.py (estimates only). History drawer reads `/api/history`.
+  table in app.py (estimates only). `PROVIDERS`/`provider_of()` separately maps
+  model → vendor (Anthropic/OpenAI/Other) for the by-provider breakdown.
+  History drawer reads `/api/history`, which returns `days` (per-day digest)
+  plus `by_agent`/`by_provider` (window totals via `token_breakdown()`).
 - **Retention**: daily rollup+prune — events >14d aggregated into
   `daily_rollup` then deleted; decisions/ended-sessions >30d deleted.
 

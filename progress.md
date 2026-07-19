@@ -94,8 +94,25 @@ _Last updated: 2026-07-19_
   live end-to-end: spawned a throwaway `http.server`, killed it from the page
   (process actually died, port freed), and confirmed all three guards reject
   (self 400 / ControlCenter 403 / bogus 404) while the dashboard stayed up.
-- **Tests**: 51 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
-  +3 bash-prefix (and `test_always_appends_rule` updated), +3 ports, +4 kill.
+- **Token history by agent/provider** (spec
+  `2026-07-19-token-history-grouping-design.md`) — `/api/history` gained
+  `by_agent` and `by_provider` (totals over the window, sorted by tokens desc),
+  additive to the unchanged `days` array. `token_breakdown()` groups the
+  existing `daily_usage.agent` column, and a new `PROVIDERS`/`provider_of()`
+  (separate from `PRICES` — vendor identification vs. pricing are different
+  concerns) maps model → Anthropic/OpenAI/Other. History drawer now shows
+  "Tokens by agent" and "Tokens by provider" tables above the per-day one.
+  Verified live with seeded usage (Anthropic/OpenAI split rendered correctly,
+  no console errors); test data removed from the live DB afterward.
+- **README quick start now uses a venv** (`python3 -m venv .venv` +
+  `.venv/bin/pip install`) instead of a bare `pip install` — verified via a
+  simulated fresh clone that the old bare-`pip` instructions risk
+  `externally-managed-environment` on Homebrew Python, while a venv always
+  works. `install_hooks.py`/`fake_agent.py` stay on plain `python3` (genuinely
+  stdlib-only, confirmed by reading their imports).
+- **Tests**: 53 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
+  +3 bash-prefix (and `test_always_appends_rule` updated), +3 ports, +4 kill,
+  +2 token-breakdown (and `test_history_endpoint` updated).
   Notification sound is frontend-only (no server surface) — verified live.
 - **Specs** committed under `docs/superpowers/specs/`.
 

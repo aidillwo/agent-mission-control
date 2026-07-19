@@ -124,6 +124,24 @@ token/cost estimates, daily digests.
     useless-to-harmful and they respawn). Enforced in the UI (button on project,
     non-self cards) and server-side (self/system/not-listening guards, re-scan
     at kill time vs PID reuse). Page defaults to a Projects-only view.
+17. **README quick start now creates a `.venv`** instead of a bare
+    `pip install`. Verified (not assumed) by simulating a fresh clone twice:
+    once confirming the whole quick-start pipeline actually works end-to-end
+    (db auto-creates, tables auto-migrate, install_hooks/fake_agent both run
+    clean), and once confirming the venv change itself installs cleanly. The
+    bare-`pip install` form risks `externally-managed-environment` on Homebrew
+    Python (a well-known PEP 668 failure mode) even though it happened to work
+    on this machine's Framework Python. `install_hooks.py`/`fake_agent.py`
+    stay on plain `python3` — read their imports, genuinely stdlib-only, no
+    reason to imply they need the venv.
+18. **Token history by agent/provider** (spec
+    `2026-07-19-token-history-grouping-design.md`) — `/api/history` gained
+    `by_agent`/`by_provider` breakdowns, additive to the existing `days` array.
+    Provider is derived from the **model** string, not the agent field —
+    deliberately a separate axis, since Cursor/custom sessions can run either
+    vendor's model. `PROVIDERS` kept as its own list rather than reusing
+    `PRICES`, since vendor identification and pricing are different concerns
+    (a model can be identifiable without a known price).
 
 ## Style / working preferences observed
 

@@ -58,6 +58,51 @@ def est_cost(model, tin, tout):
             return tin / 1e6 * pin + tout / 1e6 * pout
     return None
 
+# Model -> vendor, substring-matched. Separate from PRICES: identifying who
+# made a model is a different concern from what it costs (a model can be
+# identifiable without a known price, or vice versa).
+PROVIDERS = [
+    ("fable", "Anthropic"), ("opus", "Anthropic"), ("sonnet", "Anthropic"),
+    ("haiku", "Anthropic"), ("claude", "Anthropic"),
+    ("gpt", "OpenAI"), ("o1", "OpenAI"), ("o3", "OpenAI"), ("codex", "OpenAI"),
+]
+
+def provider_of(model):
+    m = (model or "").lower()
+    for key, name in PROVIDERS:
+        if key in m:
+            return name
+    return "Other"
+
+def token_breakdown(days=30):
+    """Total tokens/cost over the window, grouped by agent and by provider
+    (derived from model). Each returned list is sorted by total tokens desc."""
+    cutoff = local_day(time.time() - days * 86400)
+    by_agent, by_provider = {}, {}
+    with db() as c:
+        for r in c.execute(
+                "SELECT agent, model, SUM(tokens_in) i, SUM(tokens_out) o "
+                "FROM daily_usage WHERE day>=? GROUP BY agent, model", (cutoff,)):
+            tin, tout = r["i"] or 0, r["o"] or 0
+            cost = est_cost(r["model"], tin, tout)
+            a = by_agent.setdefault(r["agent"] or "unknown",
+                                    {"tokens_in": 0, "tokens_out": 0, "costs": []})
+            a["tokens_in"] += tin; a["tokens_out"] += tout
+            if cost is not None:
+                a["costs"].append(cost)
+            p = by_provider.setdefault(provider_of(r["model"]),
+                                       {"tokens_in": 0, "tokens_out": 0, "costs": []})
+            p["tokens_in"] += tin; p["tokens_out"] += tout
+            if cost is not None:
+                p["costs"].append(cost)
+    def finalize(grouped, key_name):
+        rows = [{key_name: k, "tokens_in": v["tokens_in"], "tokens_out": v["tokens_out"],
+                 "est_cost": round(sum(v["costs"]), 4) if v["costs"] else None}
+                for k, v in grouped.items()]
+        rows.sort(key=lambda r: r["tokens_in"] + r["tokens_out"], reverse=True)
+        return rows
+    return finalize(by_agent, "agent"), finalize(by_provider, "provider")
+
 def local_day(ts=None):
     return datetime.datetime.fromtimestamp(ts or time.time()).strftime("%Y-%m-%d")
 
@@ -1159,7 +1204,9 @@ def api_session_events(sid: str):
 
 @app.get("/api/history")
 def api_history(days: int = 30):
-    return {"days": history_days(min(max(days, 1), 365))}
+    n = min(max(days, 1), 365)
+    by_agent, by_provider = token_breakdown(n)
+    return {"days": history_days(n), "by_agent": by_agent, "by_provider": by_provider}
 
 @app.get("/api/daily")
 def api_daily():

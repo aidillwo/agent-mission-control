@@ -520,6 +520,32 @@ def test_est_cost_matching():
     assert amc.est_cost("mystery-model-9", 500, 500) is None
 
 
+def test_provider_of():
+    assert amc.provider_of("claude-opus-4-8") == "Anthropic"
+    assert amc.provider_of("gpt-5-codex") == "OpenAI"
+    assert amc.provider_of("codex") == "OpenAI"
+    assert amc.provider_of("gemini-2.5-pro") == "Other"
+    assert amc.provider_of(None) == "Other"
+
+
+def test_token_breakdown_by_agent_and_provider(fresh_db):
+    amc.add_usage("claude-code", "claude-opus-4-8", 1000, 100)
+    amc.add_usage("codex", "gpt-5-codex", 200, 50)
+    amc.add_usage("custom", "mystery-model", 10, 10)  # unpriced, unknown vendor
+    by_agent, by_provider = amc.token_breakdown(30)
+    agents = {r["agent"]: r for r in by_agent}
+    assert agents["claude-code"]["tokens_in"] == 1000
+    assert agents["claude-code"]["est_cost"] is not None
+    assert agents["codex"]["tokens_in"] == 200
+    assert agents["custom"]["est_cost"] is None  # unpriced model, no cost
+    providers = {r["provider"]: r for r in by_provider}
+    assert providers["Anthropic"]["tokens_in"] == 1000
+    assert providers["OpenAI"]["tokens_in"] == 200
+    assert providers["Other"]["tokens_in"] == 10
+    # sorted by total tokens (in+out) descending
+    assert [r["agent"] for r in by_agent] == ["claude-code", "codex", "custom"]
+
+
 def test_add_usage_accumulates(fresh_db):
     amc.add_usage("claude-code", "claude-opus-4-8", 100, 50)
     amc.add_usage("claude-code", "claude-opus-4-8", 10, 5)
@@ -618,6 +644,9 @@ def test_history_endpoint(fresh_db):
     amc.add_usage("custom", "claude-haiku-4-5", 10, 5)
     r = client.get("/api/history?days=7").json()
     assert r["days"] and r["days"][0]["tokens_in"] == 10
+    assert r["by_agent"] == [{"agent": "custom", "tokens_in": 10,
+                              "tokens_out": 5, "est_cost": r["by_agent"][0]["est_cost"]}]
+    assert r["by_provider"][0]["provider"] == "Anthropic"
 
 
 # ---------------------------------------------------------------- endpoints
