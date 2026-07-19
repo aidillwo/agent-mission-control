@@ -8,7 +8,10 @@ the first time. Run on each MacBook after cloning:
     python3 install_hooks.py --dry-run  # show what would change
 """
 import json
+import os
+import plistlib
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,6 +19,9 @@ HOME = Path.home()
 HERE = Path(__file__).resolve().parent
 DRY = "--dry-run" in sys.argv
 MARK = "agent-mission-control"
+
+LAUNCHD_LABEL = "com.aidill.amc"
+LAUNCHD_PLIST = HOME / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
 
 CC_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
              "Notification", "Stop", "SessionEnd"]
@@ -133,7 +139,88 @@ def install_kiro():
           "directly to http://localhost:7777/ingest/kiro/<event>.")
 
 
+def venv_python() -> Path:
+    """Absolute path to the venv interpreter. Refuse to wire launchd without it:
+    the system python has no deps and the service would crash-loop."""
+    py = HERE / ".venv" / "bin" / "python3"
+    if not py.exists():
+        raise FileNotFoundError(
+            f"{py} not found. Create the venv first "
+            "(python3 -m venv .venv && .venv/bin/pip install -r requirements.txt), "
+            "then rerun --launchd.")
+    return py
+
+
+def render_launchd_plist(python: str, app_py: str, workdir: str) -> str:
+    """Pure builder for the LaunchAgent plist XML. No placeholders, no I/O."""
+    plist = {
+        "Label": LAUNCHD_LABEL,
+        "ProgramArguments": [python, app_py],
+        "WorkingDirectory": workdir,
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "StandardOutPath": "/tmp/amc.log",
+        "StandardErrorPath": "/tmp/amc.err",
+    }
+    return plistlib.dumps(plist).decode()
+
+
+def _launchctl(*args: str):
+    """Run launchctl, swallowing failures (fail-open: never abort the install)."""
+    cmd = ["launchctl", *args]
+    if DRY:
+        print(f"[dry-run] would run: {' '.join(cmd)}")
+        return
+    try:
+        subprocess.run(cmd, check=False, capture_output=True)
+    except Exception as e:  # launchctl missing / sandboxed — non-fatal
+        print(f"[warn] launchctl {' '.join(args)} failed: {e}")
+
+
+def install_launchd():
+    try:
+        py = venv_python()
+    except FileNotFoundError as e:
+        print(f"[warn] {e}")
+        return
+    xml = render_launchd_plist(str(py), str(HERE / "app.py"), str(HERE))
+    if DRY:
+        print(f"[dry-run] would write {LAUNCHD_PLIST}")
+    else:
+        LAUNCHD_PLIST.parent.mkdir(parents=True, exist_ok=True)
+        LAUNCHD_PLIST.write_text(xml)
+        print(f"[ok] LaunchAgent: {LAUNCHD_PLIST}")
+    domain = f"gui/{os.getuid()}"
+    # bootout first so a re-run reloads a freshly written plist (idempotent).
+    _launchctl("bootout", f"{domain}/{LAUNCHD_LABEL}")
+    _launchctl("bootstrap", domain, str(LAUNCHD_PLIST))
+    _launchctl("enable", f"{domain}/{LAUNCHD_LABEL}")
+    print("     Server will start now and on every login. Logs: /tmp/amc.log, "
+          "/tmp/amc.err")
+    print("     Note: stop any hand-started app.py first (lsof -ti :7777 | "
+          "xargs kill) — two servers can't share port 7777.")
+
+
+def uninstall_launchd():
+    _launchctl("bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}")
+    if DRY:
+        print(f"[dry-run] would remove {LAUNCHD_PLIST}")
+    elif LAUNCHD_PLIST.exists():
+        LAUNCHD_PLIST.unlink()
+        print(f"[ok] removed {LAUNCHD_PLIST}")
+    else:
+        print(f"[skip] no LaunchAgent at {LAUNCHD_PLIST}")
+
+
 if __name__ == "__main__":
+    if "--uninstall-launchd" in sys.argv:
+        print(f"Agent Deck launchd uninstall (dry-run={DRY})\n")
+        uninstall_launchd()
+        sys.exit(0)
+    if "--launchd" in sys.argv:
+        print(f"Agent Deck launchd install (dry-run={DRY})\n")
+        install_launchd()
+        sys.exit(0)
     print(f"Agent Deck installer (dry-run={DRY})\n")
     install_claude_code()
     install_cursor()
@@ -141,5 +228,7 @@ if __name__ == "__main__":
     install_kiro()
     print("\nDone. Custom Python bots need no install: POST to "
           "http://localhost:7777/ingest (see README).")
-    print("Uninstall: restore the .amc.bak files or delete entries containing "
-          f"'{MARK}'.")
+    print("Auto-start on login: python3 install_hooks.py --launchd  "
+          "(remove with --uninstall-launchd).")
+    print("Uninstall hooks: restore the .amc.bak files or delete entries "
+          f"containing '{MARK}'.")

@@ -1,14 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  REFERENCE ONLY. Do not load this file directly — the paths below are
+  placeholders and /usr/bin/python3 has none of Agent Deck's deps.
+
+  Install the real, path-filled LaunchAgent with:
+      python3 install_hooks.py --launchd
+  which generates ~/Library/LaunchAgents/com.aidill.amc.plist using the venv
+  interpreter (.venv/bin/python3) and loads it via launchctl.
+  Remove it with: python3 install_hooks.py --uninstall-launchd
+-->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.aidill.amc</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/python3</string>
+    <string>/ABSOLUTE/PATH/TO/agent-mission-control/.venv/bin/python3</string>
     <string>/ABSOLUTE/PATH/TO/agent-mission-control/app.py</string>
   </array>
+  <key>WorkingDirectory</key><string>/ABSOLUTE/PATH/TO/agent-mission-control</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>/tmp/amc.log</string>

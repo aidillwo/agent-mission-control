@@ -3,7 +3,7 @@
 Living status doc. Update it as work lands. For instructions see `AGENTS.md`;
 for the why behind decisions see `context.md`.
 
-_Last updated: 2026-07-18_
+_Last updated: 2026-07-19_
 
 ## Done (shipped to main)
 
@@ -42,7 +42,16 @@ _Last updated: 2026-07-18_
     buttons. README gating section rewritten around the modes.
 - **Git**: repo initialized, pushed to origin main. `.gitignore` covers
   `.venv`, `amc.db*`, caches, `.claude/settings.local.json`.
-- **Tests**: 34 passing (`.venv/bin/pytest -q`).
+- **Launchd auto-start** (spec `2026-07-19-launchd-autostart-design.md`) —
+  opt-in `python3 install_hooks.py --launchd` generates a real LaunchAgent at
+  `~/Library/LaunchAgents/com.aidill.amc.plist` using the **venv** interpreter
+  (the old template pointed at dep-less `/usr/bin/python3`) + absolute repo
+  paths, then loads it via `launchctl bootout`/`bootstrap`/`enable` (idempotent).
+  `--uninstall-launchd` reverses it. Default install run is unchanged + prints a
+  hint. `render_launchd_plist()` is a pure, unit-tested builder; generated plist
+  passes `plutil -lint`. Reference `scripts/com.aidill.amc.plist` marked
+  REFERENCE-ONLY. **Live load is the user's step** (must free port 7777 first).
+- **Tests**: 38 passing (`.venv/bin/pytest -q`) — +4 in `tests/test_launchd.py`.
 - **Specs** committed under `docs/superpowers/specs/`.
 
 ## To confirm (feature shipped, real-world check pending)
@@ -57,8 +66,9 @@ _Last updated: 2026-07-18_
 
 ## Backlog / next pipeline (not started)
 
-1. **Wire the launchd plist** so the server runs on login / restarts on crash
-   (`scripts/com.aidill.amc.plist` exists; user hasn't loaded it).
+1. ~~**Wire the launchd plist**~~ — DONE (opt-in `--launchd`). Remaining: the
+   user runs `python3 install_hooks.py --launchd` live (frees 7777 first) to
+   confirm auto-start end-to-end.
 2. **Quiet the process-scan cards** — `*-proc` "no log data yet" cards are
    noise; hide or only show when no real session exists for that agent.
 3. **Validate the Kiro adapter** against a real Kiro install (event/field
