@@ -17,6 +17,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import sqlite3
 import time
 from contextlib import asynccontextmanager
@@ -555,6 +556,53 @@ def rule_matches(rule, tool, specifier):
         return specifier.startswith(body[:-2])
     return specifier == body
 
+# ---- safe Bash prefix generation (for the "Always" button) ----
+# Read-only-biased, plus the build/test commands developers routinely blanket-
+# approve. Destructive/state-changing ops (git push/reset, rm, pip/brew install,
+# docker run, kubectl delete, ...) are deliberately ABSENT so "Always" writes an
+# exact rule for them, never a prefix. Extend these lists to taste.
+SAFE_BASH_HEADS = {
+    "ls", "pwd", "echo", "cat", "head", "tail", "wc", "grep", "rg", "find",
+    "which", "whoami", "date", "tree", "hostname", "uname", "id", "sort",
+    "uniq", "cut", "column", "basename", "dirname", "realpath", "stat", "file",
+    "df", "du", "printenv", "env", "jq",
+    "pytest", "tox", "make", "tsc", "ruff", "mypy", "eslint", "prettier",
+    "jest", "vitest", "black", "flake8",
+}
+SAFE_BASH_SUBCMDS = {
+    "git status", "git log", "git diff", "git show", "git describe",
+    "git rev-parse", "git blame", "git shortlog", "git ls-files",
+    "git cat-file", "git reflog",
+    "npm test", "npm run", "npm ci", "pnpm test", "pnpm run", "yarn test",
+    "cargo check", "cargo test", "cargo build", "cargo clippy",
+    "go build", "go test", "go vet", "poetry run", "python -m",
+}
+_BASH_META = re.compile(r"[;&|<>`]|\$\(|\n")
+
+def bash_is_compound(cmd):
+    """True if the command chains/substitutes/redirects — a prefix rule can't be
+    trusted for it (e.g. `git status; rm -rf ~` rides in on `git status:*`)."""
+    return bool(_BASH_META.search(cmd or ""))
+
+def safe_bash_prefix(cmd):
+    """Conservative prefix (WITHOUT the trailing `:*`) for a Bash command that is
+    safe to blanket-allow, or None to fall back to an exact rule. Only simple
+    (non-compound) commands whose leading token(s) name a curated read-only or
+    routinely-whitelisted build/test op qualify."""
+    if bash_is_compound(cmd):
+        return None
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        return None
+    if not toks:
+        return None
+    if toks[0] in SAFE_BASH_HEADS:
+        return toks[0]
+    if len(toks) >= 2 and f"{toks[0]} {toks[1]}" in SAFE_BASH_SUBCMDS:
+        return f"{toks[0]} {toks[1]}"
+    return None
+
 def would_prompt(tool, tool_input, cwd, permission_mode):
     """Approximate: would Claude Code show a terminal permission prompt for
     this call? Errs graceful both ways (see spec)."""
@@ -569,9 +617,14 @@ def would_prompt(tool, tool_input, cwd, permission_mode):
         specifier = (ti.get("command") or "").strip()
     else:
         specifier = ti.get("file_path") or ti.get("url") or ""
+    bash_compound = tool == "Bash" and bash_is_compound(specifier)
     for rule in allow_rules_for(cwd):
         try:
             if rule_matches(rule, tool, specifier):
+                # A prefix rule can't be trusted for a compound Bash command:
+                # `git status; rm -rf ~` must not ride in on `Bash(git status:*)`.
+                if bash_compound and rule.endswith(":*)"):
+                    continue
                 return False
         except Exception:
             continue
@@ -638,8 +691,8 @@ async def do_gate(agent, p):
 def add_always_rule(row):
     """Append a conservative allow rule to the project's settings.local.json —
     the same file Claude Code's own 'always allow' writes. Conservative on
-    purpose: Bash gets the exact command only, WebFetch the domain, other
-    tools the bare tool name."""
+    purpose: Bash gets a curated safe `prefix:*` when the command qualifies
+    (else the exact command), WebFetch the domain, other tools the bare name."""
     try:
         detail = json.loads(row["detail"] or "{}")
     except Exception:
@@ -653,7 +706,8 @@ def add_always_rule(row):
         cmd = (ti.get("command") or "").strip()
         if not cmd:
             return None
-        rule = f"Bash({cmd})"
+        prefix = safe_bash_prefix(cmd)
+        rule = f"Bash({prefix}:*)" if prefix else f"Bash({cmd})"
     elif tool == "WebFetch" and ti.get("url"):
         host = re.sub(r"^\w+://", "", ti["url"]).split("/")[0]
         rule = f"WebFetch(domain:{host})"

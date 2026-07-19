@@ -59,7 +59,17 @@ _Last updated: 2026-07-19_
   `*-proc` card when a real card for the same agent is already shown (closes the
   ≤15s window). Verified live: guard hides `cursor-proc` when a real cursor
   session is present, keeps a lone `codex-proc`.
-- **Tests**: 41 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card.
+- **Safe Bash `prefix:*` "Always" rules** (spec
+  `2026-07-19-safe-bash-prefix-rules-design.md`) — the Always button now writes
+  a curated safe prefix for Bash (e.g. `git status --short` →
+  `Bash(git status:*)`, `ls -la` → `Bash(ls:*)`, `npm test` →
+  `Bash(npm test:*)`) via `safe_bash_prefix()` + `SAFE_BASH_HEADS`/
+  `SAFE_BASH_SUBCMDS` allowlists (read-only-biased + build/test; destructive
+  ops like `git push`, `rm`, `docker run` fall back to exact). `would_prompt`
+  hardened: a `prefix:*` rule is **not** trusted for a compound Bash command, so
+  `git status; rm -rf ~` can't ride in on `Bash(git status:*)`.
+- **Tests**: 44 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
+  +3 bash-prefix (and `test_always_appends_rule` updated to the prefix form).
 - **Specs** committed under `docs/superpowers/specs/`.
 
 ## To confirm (feature shipped, real-world check pending)
@@ -71,6 +81,12 @@ _Last updated: 2026-07-19_
       terminal prompt. Timeout path: no click within 120s → the terminal
       prompt appears and the card stays orange. The server/hook/UI paths are
       unit-tested and committed; this is the human-in-the-loop confirmation.
+- [ ] **Live-verify launchd auto-start**: free port 7777, then
+      `python3 install_hooks.py --launchd` → server comes up and survives a
+      logout/login and a `kill`. Reverse with `--uninstall-launchd`.
+- [ ] **Live-click "Always"** on a real gated Bash command (e.g. `git status`)
+      → confirm `Bash(git status:*)` lands in the project's
+      `.claude/settings.local.json` and the next variant isn't held.
 
 ## Backlog / next pipeline (not started)
 
@@ -81,8 +97,8 @@ _Last updated: 2026-07-19_
    guard).
 3. **Validate the Kiro adapter** against a real Kiro install (event/field
    names are guesses).
-4. **Bash `prefix:*` "Always" rules** — v1 "Always" writes exact Bash commands
-   only; consider safe prefix generation later.
+4. ~~**Bash `prefix:*` "Always" rules**~~ — DONE (`safe_bash_prefix` +
+   compound-command gate hardening). Extend the allowlists in `app.py` as needed.
 5. **Notch / menu-bar native app** — deferred; SwiftBar plugin covers ~80%.
    This is the surface that could eventually answer already-shown terminal
    prompts (keystroke injection) — explicitly out of scope for now.

@@ -387,12 +387,62 @@ def test_always_appends_rule_and_allows(fresh_db, tmp_path):
 
     body, code = run(amc.do_decide(did, "always"))
     assert code == 200 and body["ok"] is True
-    assert body["rule"] == "Bash(npm test)"
+    # "npm test" is a curated safe subcommand -> a prefix rule, not exact
+    assert body["rule"] == "Bash(npm test:*)"
     settings = json.loads((proj / ".claude" / "settings.local.json").read_text())
-    assert "Bash(npm test)" in settings["permissions"]["allow"]
-    # and the rule now suppresses future holds for that exact command
+    assert "Bash(npm test:*)" in settings["permissions"]["allow"]
+    # the prefix rule now suppresses future holds for variants of the command
     amc._rules_cache.clear()
     assert amc.would_prompt("Bash", {"command": "npm test"}, str(proj), None) is False
+    assert amc.would_prompt("Bash", {"command": "npm test --coverage"},
+                            str(proj), None) is False
+
+
+def test_safe_bash_prefix():
+    sp = amc.safe_bash_prefix
+    # curated safe heads / subcommands -> prefix
+    assert sp("git status --short") == "git status"
+    assert sp("ls -la /tmp") == "ls"
+    assert sp("pytest tests/x.py -q") == "pytest"
+    assert sp("npm run build") == "npm run"
+    # not on the allowlist -> exact rule (None)
+    assert sp("git push origin main") is None
+    assert sp("rm -rf /") is None
+    assert sp("docker run x") is None
+    # compound commands never get a prefix
+    assert sp("git status; rm -rf ~") is None
+    assert sp("cat a | grep b") is None
+    assert sp("echo hi && rm x") is None
+    assert sp("") is None
+
+
+def test_always_rule_falls_back_to_exact_for_unsafe(fresh_db, tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    with amc.db() as c:
+        c.execute("INSERT INTO decisions(session_id,tool,summary,detail,status,"
+                  "created_at) VALUES('s1','Bash','x','"
+                  + json.dumps({"cwd": str(proj), "tool_name": "Bash",
+                                "tool_input": {"command": "git push origin main"}})
+                  + "','pending',1)")
+        did = c.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    body, _ = run(amc.do_decide(did, "always"))
+    assert body["rule"] == "Bash(git push origin main)"  # exact, no prefix
+
+
+def test_prefix_rule_not_trusted_for_compound(fresh_db, tmp_path, monkeypatch):
+    monkeypatch.setattr(amc, "HOME", tmp_path / "nohome")
+    amc._rules_cache.clear()
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / ".claude" / "settings.json").write_text(json.dumps({
+        "permissions": {"allow": ["Bash(git status:*)"]}}))
+    cwd = str(proj)
+    # a variant of the allowed prefix passes
+    assert amc.would_prompt("Bash", {"command": "git status -s"}, cwd, None) is False
+    # a compound command must NOT ride in on the prefix rule -> still prompts
+    assert amc.would_prompt("Bash", {"command": "git status; rm -rf ~"},
+                            cwd, None) is True
 
 
 # ---------------------------------------------------------------- usage & history
