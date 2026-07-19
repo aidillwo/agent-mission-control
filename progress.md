@@ -68,8 +68,17 @@ _Last updated: 2026-07-19_
   ops like `git push`, `rm`, `docker run` fall back to exact). `would_prompt`
   hardened: a `prefix:*` rule is **not** trusted for a compound Bash command, so
   `git status; rm -rf ~` can't ride in on `Bash(git status:*)`.
+- **Notification sound** (spec `2026-07-19-notification-sound-design.md`) — the
+  waiting/error alert now plays a synthesized Web Audio chime (no asset, no CDN):
+  rising two-note for `waiting_input`, falling two-note for `error`. Gated by the
+  existing bell/`muted` toggle (one control for popup + sound); `AudioContext`
+  unlocked on bell click + first pointerdown (autoplay policy). Chime fires even
+  when browser-notification permission is denied. Feature-detected + try/catch —
+  purely additive, can't break the dashboard. Verified live (chime fires via
+  `notify()` on transition, mute suppresses, no console errors).
 - **Tests**: 44 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
   +3 bash-prefix (and `test_always_appends_rule` updated to the prefix form).
+  Notification sound is frontend-only (no server surface) — verified live.
 - **Specs** committed under `docs/superpowers/specs/`.
 
 ## To confirm (feature shipped, real-world check pending)

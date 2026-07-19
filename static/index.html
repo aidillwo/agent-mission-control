@@ -324,10 +324,43 @@ function renderBell(){
 }
 $('#bell').onclick=()=>{
   muted=!muted; localStorage.setItem('amc_muted',muted?'1':'0'); renderBell();
+  unlockAudio();
   if(!muted && 'Notification' in window && Notification.permission==='default')
     Notification.requestPermission();
 };
 renderBell();
+
+/* ---------- alert sound (synthesized, no asset) ---------- */
+let audioCtx=null;
+function unlockAudio(){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)return;
+    if(!audioCtx)audioCtx=new AC();
+    if(audioCtx.state==='suspended')audioCtx.resume();
+  }catch(e){}
+}
+// autoplay policy needs a gesture: unlock on the first interaction anywhere
+addEventListener('pointerdown',unlockAudio,{once:true});
+function tone(freq,start,dur){
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.type='sine'; o.frequency.value=freq;
+  const t=audioCtx.currentTime+start;
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.18,t+0.02);   // soft attack, low volume
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);  // gentle decay
+  o.connect(g).connect(audioCtx.destination);
+  o.start(t); o.stop(t+dur+0.02);
+}
+function playChime(kind){
+  if(muted)return;
+  unlockAudio();
+  if(!audioCtx||audioCtx.state!=='running')return;
+  try{
+    if(kind==='error'){ tone(392,0,0.16); tone(294,0.15,0.22); }  // falling: G4->D4
+    else { tone(660,0,0.14); tone(880,0.13,0.20); }               // rising: E5->A5
+  }catch(e){}
+}
 
 /* ---------- clock ---------- */
 setInterval(()=>{$('#clock').textContent=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})},1000);
@@ -525,8 +558,9 @@ async function loadDaily(){
 loadDaily(); setInterval(loadDaily,60000);
 
 function notify(s){
-  if(muted||!('Notification' in window))return;
-  if(Notification.permission!=='granted')return;
+  if(muted)return;
+  playChime(s.status);  // audible alert fires even if popups are denied/unsupported
+  if(!('Notification' in window)||Notification.permission!=='granted')return;
   const n=new Notification(s.status==='error'?'Agent hit an error':'Agent needs your input',
     {body:`${s.agent_type} · ${s.project||s.session_id}\n${s.current_task||''}`,
      tag:s.session_id});
