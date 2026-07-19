@@ -418,6 +418,11 @@ function render(){
       if(f==='active'?s.status!=='ended':s.status===f)return true;
     return false;
   });
+  /* hide the process-scan safety-net card when a real session for the same
+     agent is already shown (backend retires it within 15s; this closes the gap) */
+  const realAgents=new Set(shown.filter(s=>!s.session_id.endsWith('-proc'))
+    .map(s=>s.agent_type));
+  shown=shown.filter(s=>!(s.session_id.endsWith('-proc')&&realAgents.has(s.agent_type)));
   shown.sort((a,b)=>{
     const rank={waiting_input:0,error:1,working:2,idle:3,ended:4};
     const arank=s=>s.agent_type==='kiro'?1:0;  // kiro least-used: sink to bottom within a status group

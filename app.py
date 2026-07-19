@@ -853,6 +853,35 @@ def codex_line(path, obj):
 codex_line.last_sid = {}
 codex_line.last_usage = {}
 
+def reconcile_proc_card(agent):
+    """Process-scan safety net for one agent. Returns True if a UI-visible
+    change was made (card retired, created, or revived), else False.
+
+    The `{agent}-proc` card only has value when we have NO real session for the
+    agent. When a real (hook/tailer-driven) session is live it is redundant, so
+    retire it; otherwise keep it fresh so it stops flip-flopping (create ->
+    reaped after IDLE_S -> recreate)."""
+    proc_sid = f"{agent}-proc"
+    with db() as c:
+        real = c.execute(
+            "SELECT 1 FROM sessions WHERE agent_type=? AND session_id!=? AND "
+            "status IN ('working','idle','waiting_input') LIMIT 1",
+            (agent, proc_sid)).fetchone()
+        existing = c.execute("SELECT status FROM sessions WHERE session_id=?",
+                             (proc_sid,)).fetchone()
+    if real:
+        if existing and existing["status"] != "ended":
+            with db() as c:
+                c.execute("UPDATE sessions SET status='ended' WHERE session_id=?",
+                          (proc_sid,))
+            return True
+        return False
+    # This process is our only signal for the agent: keep the card alive.
+    upsert_session(proc_sid, agent, status="idle",
+                   task="Process detected (no log data yet)")
+    return existing is None or existing["status"] == "ended"
+
+
 async def process_scan():
     try:
         import psutil
@@ -862,23 +891,20 @@ async def process_scan():
              "cursor": "cursor", "Cursor": "cursor",
              "kiro": "kiro", "Kiro": "kiro"}
     while True:
+        changed = False
         try:
             seen = set()
-            for proc in psutil.process_iter(["name", "cmdline"]):
+            for proc in psutil.process_iter(["name"]):
                 name = (proc.info["name"] or "")
                 for key, agent in KNOWN.items():
                     if key in name and agent not in seen:
                         seen.add(agent)
-                        with db() as c:
-                            live = c.execute(
-                                "SELECT 1 FROM sessions WHERE agent_type=? AND "
-                                "status IN ('working','idle','waiting_input') "
-                                "LIMIT 1", (agent,)).fetchone()
-                        if not live:
-                            upsert_session(f"{agent}-proc", agent, status="idle",
-                                           task="Process detected (no log data yet)")
+                        if reconcile_proc_card(agent):
+                            changed = True
         except Exception:
             pass
+        if changed:
+            await hub.broadcast()
         await asyncio.sleep(15)
 
 # ---------------------------------------------------------------- app

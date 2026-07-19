@@ -537,3 +537,40 @@ def test_daily_endpoint(fresh_db, client):
     amc.add_event("d1", "tool_use", "x")
     days = client.get("/api/daily").json()["days"]
     assert days and days[-1]["n"] >= 1
+
+
+# ---------------------------------------------------------------- proc cards
+
+def _status(sid):
+    with amc.db() as c:
+        r = c.execute("SELECT status FROM sessions WHERE session_id=?",
+                      (sid,)).fetchone()
+    return r["status"] if r else None
+
+
+def test_reconcile_proc_retires_card_when_real_session_live(fresh_db):
+    """A real hook/tailer session makes the safety-net card redundant."""
+    amc.upsert_session("real-abc", "claude-code", status="working")
+    amc.upsert_session("claude-code-proc", "claude-code", status="idle",
+                       task="Process detected (no log data yet)")
+    assert amc.reconcile_proc_card("claude-code") is True
+    assert _status("claude-code-proc") == "ended"
+    assert _status("real-abc") == "working"
+
+
+def test_reconcile_proc_creates_then_stays_idle(fresh_db):
+    """No real session: create the card once, then keep it idle (no flip-flop,
+    no redundant broadcast)."""
+    assert amc.reconcile_proc_card("codex") is True          # created
+    assert _status("codex-proc") == "idle"
+    assert amc.reconcile_proc_card("codex") is False         # refresh only
+    assert _status("codex-proc") == "idle"                   # not reaped/ended
+
+
+def test_reconcile_proc_revives_ended_card(fresh_db):
+    """Card ended earlier (real session came and went); process still runs and
+    is again our only signal -> revive it."""
+    amc.upsert_session("cursor-proc", "cursor", status="ended",
+                       task="Process detected (no log data yet)")
+    assert amc.reconcile_proc_card("cursor") is True
+    assert _status("cursor-proc") == "idle"

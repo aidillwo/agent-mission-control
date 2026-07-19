@@ -51,7 +51,15 @@ _Last updated: 2026-07-19_
   hint. `render_launchd_plist()` is a pure, unit-tested builder; generated plist
   passes `plutil -lint`. Reference `scripts/com.aidill.amc.plist` marked
   REFERENCE-ONLY. **Live load is the user's step** (must free port 7777 first).
-- **Tests**: 38 passing (`.venv/bin/pytest -q`) — +4 in `tests/test_launchd.py`.
+- **Quiet process-scan cards** (spec `2026-07-19-quiet-proc-cards-design.md`) —
+  `{agent}-proc` safety-net cards no longer flip-flop or linger. New
+  `reconcile_proc_card(agent)`: retires the `-proc` card when a real
+  (non-proc) session is live, else keeps it fresh (no more create→reap→recreate
+  every 10 min); `process_scan` broadcasts on change. Frontend guard hides a
+  `*-proc` card when a real card for the same agent is already shown (closes the
+  ≤15s window). Verified live: guard hides `cursor-proc` when a real cursor
+  session is present, keeps a lone `codex-proc`.
+- **Tests**: 41 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card.
 - **Specs** committed under `docs/superpowers/specs/`.
 
 ## To confirm (feature shipped, real-world check pending)
@@ -69,8 +77,8 @@ _Last updated: 2026-07-19_
 1. ~~**Wire the launchd plist**~~ — DONE (opt-in `--launchd`). Remaining: the
    user runs `python3 install_hooks.py --launchd` live (frees 7777 first) to
    confirm auto-start end-to-end.
-2. **Quiet the process-scan cards** — `*-proc` "no log data yet" cards are
-   noise; hide or only show when no real session exists for that agent.
+2. ~~**Quiet the process-scan cards**~~ — DONE (`reconcile_proc_card` + frontend
+   guard).
 3. **Validate the Kiro adapter** against a real Kiro install (event/field
    names are guesses).
 4. **Bash `prefix:*` "Always" rules** — v1 "Always" writes exact Bash commands
