@@ -20,18 +20,20 @@ never add external dependencies, CDNs, or network calls beyond localhost.
 | `static/index.html` | The entire frontend: single file, vanilla JS, inline Lucide SVGs, no build step. |
 | `hooks/cc_gate.py` | Claude Code PreToolUse hook — reports tool use AND gates (fail-open). |
 | `hooks/cursor_hook.sh`, `hooks/codex_notify.py`, `hooks/kiro_hook.sh` | Other agent forwarders. |
-| `install_hooks.py` | Idempotent installer; writes user-level agent configs, backs up to `*.amc.bak`. |
-| `tests/test_app.py` | Full pytest suite (34 tests). Keep it green. |
+| `install_hooks.py` | Idempotent installer; writes user-level agent configs, backs up to `*.amc.bak`. Also generates + loads the launchd LaunchAgent (`--launchd` / `--uninstall-launchd`). |
+| `tests/test_app.py` | Full pytest suite (44 tests). Keep it green. |
+| `tests/test_launchd.py` | Pure/plist-level tests for the launchd wiring (no launchctl, no real `~/Library`). |
 | `docs/superpowers/specs/` | Design specs. **Write a spec here before any non-trivial feature.** |
-| `scripts/` | SwiftBar menu-bar plugin, launchd plist, fake_agent demo. |
+| `scripts/` | SwiftBar menu-bar plugin, reference launchd plist (installer generates the real one), fake_agent demo. |
 
 ## Commands
 
 ```bash
-.venv/bin/pytest -q                     # run tests (must pass before commit)
-.venv/bin/python app.py                 # run server (port 7777, fixed — hooks post there)
+.venv/bin/pytest -q                          # run tests (must pass before commit)
+.venv/bin/python app.py                      # run server (port 7777, fixed — hooks post there)
 .venv/bin/python install_hooks.py --dry-run
-.venv/bin/python scripts/fake_agent.py  # demo data
+.venv/bin/python install_hooks.py --launchd  # generate + load LaunchAgent (auto-start on login)
+.venv/bin/python scripts/fake_agent.py       # demo data
 ```
 
 Dev server via Claude Code preview: launch config `amc` in `.claude/launch.json`.
@@ -64,7 +66,10 @@ Dev server via Claude Code preview: launch config `amc` in `.claude/launch.json`
   (`/ingest/claude-code/{event}`), Cursor hooks (`/ingest/cursor/{event}`),
   Kiro (`/ingest/kiro/{event}`, beta/untested), Codex notify
   (`/ingest/codex-notify`), generic webhook (`/ingest`), JSONL tailers
-  (`~/.claude/projects/`, `~/.codex/sessions/`), psutil process scan.
+  (`~/.claude/projects/`, `~/.codex/sessions/`), psutil process scan
+  (`reconcile_proc_card()`: the `{agent}-proc` safety-net card exists only
+  while no real session is live for that agent — retired once one appears,
+  kept fresh otherwise so it doesn't flip-flop).
 - **Status model**: working / idle / waiting_input / error / ended.
   `waiting_input` is sticky (TTL 2h). **Tailers use soft upserts** — they must
   never clear `waiting_input` (see the visibility-stomp fix in
@@ -73,8 +78,19 @@ Dev server via Claude Code preview: launch config `amc` in `.claude/launch.json`
   default) holds only calls Claude Code would prompt for — `would_prompt()`
   approximates its permission rules (bare tool / exact / `prefix:*`, global +
   project settings, permission modes) — and only while a dashboard WS client
-  is connected. Decisions: Allow / Always (writes rule to the project's
-  `.claude/settings.local.json`) / Deny. 120s timeout ⇒ native terminal flow.
+  is connected. Decisions: Allow / Always (writes a rule to the project's
+  `.claude/settings.local.json` — for Bash, a curated safe `prefix:*` via
+  `safe_bash_prefix()` when the command qualifies, else the exact command;
+  compound commands never get a prefix, and a prefix rule is never trusted to
+  match a compound command) / Deny. 120s timeout ⇒ native terminal flow.
+- **Notifications**: browser `Notification` + a synthesized Web Audio chime
+  (rising tone for waiting, falling for error) on the waiting_input/error
+  transition, both gated by the header bell/`muted` toggle. No audio asset —
+  generated in `static/index.html`.
+- **Auto-start**: `install_hooks.py --launchd` generates and loads a
+  LaunchAgent (`~/Library/LaunchAgents/com.aidill.amc.plist`) using the venv
+  interpreter; `--uninstall-launchd` reverses it. Opt-in, not part of the
+  default install.
 - **Usage/cost**: `daily_usage` table fed by tailers + webhook; `PRICES`
   table in app.py (estimates only). History drawer reads `/api/history`.
 - **Retention**: daily rollup+prune — events >14d aggregated into

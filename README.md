@@ -94,9 +94,13 @@ Thresholds are constants at the top of `app.py` (`WORKING_S`, `IDLE_S`,
 
 ## Notifications
 
-Browser notifications fire when any agent starts waiting for input or errors.
-The bell in the header mutes everything in one click, and the setting is
-remembered. First time you leave it on, your browser will ask permission.
+Browser notifications **and a short chime** fire when any agent starts waiting
+for input or errors — a rising tone for "needs input", a falling tone for
+"error", so you can tell them apart without looking. The chime is synthesized
+in the browser (no audio file), so it plays even if you've denied notification
+permission or the tab isn't focused enough for a popup. The bell in the header
+mutes both in one click, and the setting is remembered. First time you leave it
+on, your browser will ask permission for the popup notification.
 
 ---
 
@@ -114,10 +118,19 @@ its terminal. Each Claude Code / Cursor card has a 3-state **gate chip**:
 Held actions show the concrete command with **Allow · Always · Deny** buttons.
 **Always** also appends a conservative allow rule to that project's
 `.claude/settings.local.json` (the same file Claude Code's own "always allow"
-writes), so it stops asking on both surfaces. If you don't answer within
-`GATE_TIMEOUT_S` (120s), or the dashboard is down, the agent falls back to its
-own terminal prompt — gating never blocks an agent permanently, and the card
-stays orange ("Waiting for you") so you know to switch to the terminal.
+writes), so it stops asking on both surfaces. For Bash, "conservative" means a
+curated safe `prefix:*` rule when the command qualifies (`git status --short`
+→ `Bash(git status:*)`, `ls -la` → `Bash(ls:*)`, `npm test` →
+`Bash(npm test:*)`) so near-variants of the same command don't keep re-prompting
+— destructive or state-changing commands (`git push`, `rm`, `docker run`,
+`pip install`, ...) are **not** on the safe list and get an exact-command rule
+instead, same as before. A `prefix:*` rule is never trusted for a *compound*
+Bash command (`;`, `&&`, `|`, backticks, `$(...)`, redirects) — `Bash(git
+status:*)` cannot be ridden in on by `git status; rm -rf ~`, which still gets
+held. If you don't answer within `GATE_TIMEOUT_S` (120s), or the dashboard is
+down, the agent falls back to its own terminal prompt — gating never blocks an
+agent permanently, and the card stays orange ("Waiting for you") so you know to
+switch to the terminal.
 
 Auto mode mirrors Claude Code's permission rules approximately (bare tool
 names, exact specifiers, and `prefix:*` Bash rules from global + project
@@ -192,10 +205,17 @@ too, so nothing here needs to change for it.
 ## Run it on login (optional)
 
 ```bash
-cp scripts/com.aidill.amc.plist ~/Library/LaunchAgents/
-# edit the path inside first, then:
-launchctl load ~/Library/LaunchAgents/com.aidill.amc.plist
+python3 install_hooks.py --launchd            # generate + load the LaunchAgent
+python3 install_hooks.py --uninstall-launchd   # remove it
 ```
+
+Generates `~/Library/LaunchAgents/com.aidill.amc.plist` using your `.venv`
+interpreter and absolute repo paths (refuses to install if `.venv` doesn't
+exist yet — create it first). Starts the server now, restarts it if it
+crashes, and starts it again on every login. Logs: `/tmp/amc.log`,
+`/tmp/amc.err`. Stop any hand-started `app.py` first — two servers can't share
+port 7777 (`lsof -ti :7777 | xargs kill`). `scripts/com.aidill.amc.plist` is a
+reference copy only; don't load it directly.
 
 ---
 
@@ -227,7 +247,8 @@ pytest -q
 ```
 
 Covers status derivation, the intake normalizers, log-tailer rotation
-recovery, and the HTTP endpoints.
+recovery, the HTTP endpoints, gating/allow-rule generation, and the launchd
+plist builder (`tests/test_launchd.py`).
 
 ## Uninstall
 

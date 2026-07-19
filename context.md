@@ -27,7 +27,8 @@ token/cost estimates, daily digests.
   Codex `notify` slot was already taken by Codex Computer Use — left alone
   (Codex is covered by the log tailer).
 - The user runs the server themselves (`python3 app.py` or the preview launch
-  config `amc`). A launchd plist exists in `scripts/` but is NOT wired yet.
+  config `amc`), or via the opt-in LaunchAgent (`install_hooks.py --launchd`,
+  see decision 12) — the user hasn't loaded the live one yet.
 - The user's second MacBook: copy folder, `pip install -r requirements.txt`,
   `python3 install_hooks.py` — each machine fully independent (by decision).
 
@@ -80,6 +81,32 @@ token/cost estimates, daily digests.
     chips and status chips on two rows, both **multi-select**, "Active"
     (= not ended) status filter **pre-selected on load**, cards limited to
     sessions active in the last 3 days, `Cache-Control: no-cache` on `/`.
+12. **Launchd auto-start** (spec `2026-07-19-launchd-autostart-design.md`) —
+    opt-in `install_hooks.py --launchd` (LaunchAgent, not a system daemon —
+    needs the user's GUI-session identity to read `~/.claude` etc.). Fixed the
+    old plist template, which pointed at dep-less `/usr/bin/python3` and a
+    placeholder path; the installer now generates it from the venv interpreter.
+    Kept opt-in rather than folded into the default install because it changes
+    login behavior and starts a long-lived process.
+13. **Quiet process-scan cards** (spec `2026-07-19-quiet-proc-cards-design.md`)
+    — the `{agent}-proc` psutil safety net was flip-flopping (create → reaped
+    after ~10min idle → recreate, forever) and lingering next to real sessions.
+    Fixed by making the card's existence conditional on there being no real
+    session for the agent, rather than a one-shot creation.
+14. **Safe Bash `prefix:*` "Always" rules** (spec
+    `2026-07-19-safe-bash-prefix-rules-design.md`) — v1 Always wrote the exact
+    Bash command only, so near-variants re-prompted. Added a curated
+    read-only/build-test allowlist for safe prefixes; destructive commands
+    (`git push`, `rm`, `docker run`, ...) are deliberately excluded and still
+    get exact rules. Also hardened `would_prompt`: a prefix rule is never
+    trusted for a *compound* Bash command, so a prefix can't be ridden in on by
+    an appended destructive command.
+15. **Notification sound** — synthesized Web Audio chime (rising tone for
+    waiting_input, falling for error) added alongside the existing browser
+    `Notification`, gated by the same bell/mute control. Chosen over a shipped
+    audio file to keep the "everything local, no external assets" rule; fires
+    even when Notification permission is denied, since a missed popup was the
+    original complaint.
 
 ## Style / working preferences observed
 
