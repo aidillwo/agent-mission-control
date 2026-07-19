@@ -121,7 +121,9 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
   align-items:center;font-family:var(--mono);font-size:.6rem;font-weight:700;
   text-transform:uppercase;letter-spacing:.05em;padding:3px 8px;
   border:2px solid var(--ink);border-radius:99px;background:var(--card)}
-.gate-toggle.on{background:var(--lav);color:var(--ink)}
+.gate-toggle.gm-auto{background:var(--lav-soft)}
+.gate-toggle.gm-all{background:var(--lav)}
+.gate-toggle.gm-off{opacity:.55}
 .gate-toggle .icon{width:.85em;height:.85em}
 .card.gatable .row1{padding-right:66px}  /* clear the absolute gate toggle */
 .decision{margin-top:10px;border:2px solid var(--ink);border-radius:10px;
@@ -134,6 +136,7 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
   border:2px solid var(--ink);border-radius:9px;box-shadow:2px 2px 0 var(--ink)}
 .decision-btns button:active{transform:translate(2px,2px);box-shadow:none}
 .db-allow{background:var(--lime)}
+.db-always{background:var(--teal-soft)}
 .db-deny{background:var(--coral);color:#fff}
 .decision-btns .icon{width:.95em;height:.95em}
 .empty{border:2px dashed var(--ink);border-radius:var(--r);padding:34px;
@@ -429,10 +432,18 @@ function render(){
     const dec=decBySid[s.session_id];
     return `
     <div class="card s-${s.status}${gatable?' gatable':''}" role="button" tabindex="0" data-sid="${esc(s.session_id)}">
-      ${gatable?`<button class="gate-toggle ${s.gated?'on':''}" data-gate="${esc(s.session_id)}"
-        data-on="${s.gated?0:1}" aria-pressed="${!!s.gated}"
-        title="${s.gated?'Gating on: actions wait for your approval':'Turn on approval gating for this session'}">
-        ${ICONS.shield}${s.gated?'Gated':'Gate'}</button>`:''}
+      ${gatable?(()=>{
+        const mode=s.gate_mode||'off';
+        // cc cycles auto->all->off; cursor has no auto (can't read its rules)
+        const next=s.agent_type==='claude-code'
+          ?{auto:'all',all:'off',off:'auto'}[mode]||'auto'
+          :(mode==='all'?'off':'all');
+        const tip={auto:'Auto: holds only what Claude Code would ask approval for (while the dashboard is open)',
+                   all:'All: every action waits for your approval',
+                   off:'Off: watch only, never hold'}[mode];
+        return `<button class="gate-toggle gm-${mode}" data-gate="${esc(s.session_id)}"
+          data-next="${next}" title="${tip} — click for ${next}">
+          ${ICONS.shield}${mode.toUpperCase()}</button>`;})():''}
       <div class="row1">
         <span class="badge b-${esc(s.agent_type)}">${esc(s.agent_type)}</span>
         ${s.model?`<span class="model">${esc(s.model)}</span>`:''}
@@ -444,6 +455,8 @@ function render(){
         <div class="decision-action">${ICONS.shield}${esc(dec.summary||dec.tool||'Pending action')}</div>
         <div class="decision-btns">
           <button class="db-allow" data-decide="allow" data-did="${dec.id}">${ICONS.check}Allow</button>
+          <button class="db-always" data-decide="always" data-did="${dec.id}"
+            title="Allow and add a rule to this project's settings so it stops asking">${ICONS.shield}Always</button>
           <button class="db-deny" data-decide="deny" data-did="${dec.id}">${ICONS.x}Deny</button>
         </div>
       </div>`:''}
@@ -547,7 +560,7 @@ $('#grid').onclick=async e=>{
   if(gt){e.stopPropagation();
     await fetch(`/api/session/${encodeURIComponent(gt.dataset.gate)}/gate`,
       {method:'POST',headers:{'Content-Type':'application/json'},
-       body:JSON.stringify({on:gt.dataset.on==='1'})});
+       body:JSON.stringify({mode:gt.dataset.next})});
     return;}
   const db=e.target.closest('[data-decide]');
   if(db){e.stopPropagation();

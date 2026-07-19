@@ -16,6 +16,7 @@ import datetime
 import glob
 import json
 import os
+import re
 import sqlite3
 import time
 from contextlib import asynccontextmanager
@@ -76,7 +77,8 @@ def init_db():
           status TEXT DEFAULT 'working',
           current_task TEXT,
           started_at REAL, last_seen_at REAL,
-          gated INTEGER DEFAULT 0
+          gated INTEGER DEFAULT 0,
+          gate_mode TEXT DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS events(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,13 +106,20 @@ def init_db():
         CREATE INDEX IF NOT EXISTS ev_ts ON events(ts);
         CREATE INDEX IF NOT EXISTS dec_status ON decisions(status);
         """)
-        # older DBs predate the gated column; add it if missing
+        # older DBs predate these columns; add and migrate as needed
         cols = {r["name"] for r in c.execute("PRAGMA table_info(sessions)")}
         if "gated" not in cols:
             c.execute("ALTER TABLE sessions ADD COLUMN gated INTEGER DEFAULT 0")
+        if "gate_mode" not in cols:
+            c.execute("ALTER TABLE sessions ADD COLUMN gate_mode TEXT DEFAULT ''")
+            # sessions gated under the old boolean keep strict gating
+            c.execute("UPDATE sessions SET gate_mode='all' WHERE gated=1")
 
 def upsert_session(sid, agent_type, *, model=None, project=None, cwd=None,
-                   status=None, task=None, ts=None):
+                   status=None, task=None, ts=None, soft=False):
+    """soft=True marks a passive observation (log tailers): it must never
+    clear waiting_input, because a transcript line is not evidence that the
+    block was answered. Hook-driven events (PostToolUse etc.) stay hard."""
     ts = ts or time.time()
     if cwd and not project:
         project = Path(cwd).name or cwd
@@ -123,13 +132,14 @@ def upsert_session(sid, agent_type, *, model=None, project=None, cwd=None,
                 (sid, agent_type, model, project, cwd, status or "working",
                  task, ts, ts))
         else:
+            hard_status = None if (soft and row["status"] == "waiting_input") else status
             c.execute(
                 "UPDATE sessions SET "
                 "model=COALESCE(?,model), project=COALESCE(?,project),"
                 "cwd=COALESCE(?,cwd), status=COALESCE(?,status),"
                 "current_task=COALESCE(?,current_task),"
                 "last_seen_at=MAX(last_seen_at,?) WHERE session_id=?",
-                (model, project, cwd, status, task, ts, sid))
+                (model, project, cwd, hard_status, task, ts, sid))
 
 def add_event(sid, kind, summary, detail=None, ts=None, decision_id=None):
     ts = ts or time.time()
@@ -182,6 +192,10 @@ def state_payload():
     with db() as c:
         sessions = [dict(r) for r in c.execute(
             "SELECT * FROM sessions ORDER BY last_seen_at DESC LIMIT 200")]
+    for s in sessions:  # resolve per-agent default so the UI shows the real mode
+        if s.get("gate_mode") not in GATE_MODES:
+            s["gate_mode"] = ("auto" if s["agent_type"] == "claude-code" else "off")
+    with db() as c:
         events = [dict(r) for r in c.execute(
             "SELECT id,session_id,ts,kind,summary FROM events "
             "ORDER BY ts DESC LIMIT ?", (EVENT_FEED_LIMIT,))]
@@ -284,7 +298,10 @@ async def handle_claude_code(event, p):
         upsert_session(sid, "claude-code", status="working", **common)
     elif event == "Notification":
         msg = txt(p.get("message"), 160) or "Needs your attention"
-        upsert_session(sid, "claude-code", status="waiting_input", **common)
+        m = re.search(r"permission to use (\S+)", msg)
+        task = f"Needs approval: {m.group(1)}" if m else None
+        upsert_session(sid, "claude-code", status="waiting_input", task=task,
+                       **common)
         add_event(sid, "waiting_input", msg, p)
     elif event == "Stop":
         # Stop fires at the end of every turn, not when the session closes.
@@ -476,21 +493,113 @@ def describe_action(agent, p):
         return "command", txt(cmd, 160) or "Cursor action"
     return "action", "Pending action"
 
-def is_gated(sid):
+GATE_MODES = ("off", "auto", "all")
+
+def effective_gate_mode(sid, agent):
+    """auto is the default for claude-code (mirror its own approvals); other
+    agents default to off because we can't evaluate their permission rules."""
     with db() as c:
-        row = c.execute("SELECT gated FROM sessions WHERE session_id=?",
+        row = c.execute("SELECT gate_mode FROM sessions WHERE session_id=?",
                         (sid,)).fetchone()
-    return bool(row and row["gated"])
+    mode = row["gate_mode"] if row else None
+    if mode in GATE_MODES:
+        return mode
+    return "auto" if agent == "claude-code" else "off"
+
+# ---- would-prompt evaluation (approximate mirror of Claude Code's rules) ----
+
+SAFE_TOOLS = {"Read", "Glob", "Grep", "LS", "TodoWrite", "NotebookRead",
+              "Task", "Skill", "TaskCreate", "TaskUpdate", "TaskList"}
+PROMPTY_TOOLS = {"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit",
+                 "WebFetch"}
+EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+_rules_cache: dict[str, tuple[float, list]] = {}
+
+def _read_allow_rules(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return []
+    cached = _rules_cache.get(path)
+    if cached and cached[0] == st.st_mtime:
+        return cached[1]
+    try:
+        rules = (json.loads(Path(path).read_text())
+                 .get("permissions", {}).get("allow", []) or [])
+        rules = [r for r in rules if isinstance(r, str)]
+    except Exception:
+        rules = []
+    _rules_cache[path] = (st.st_mtime, rules)
+    return rules
+
+def allow_rules_for(cwd):
+    paths = [str(HOME / ".claude" / "settings.json")]
+    if cwd:
+        paths += [str(Path(cwd) / ".claude" / "settings.json"),
+                  str(Path(cwd) / ".claude" / "settings.local.json")]
+    out = []
+    for p in paths:
+        out += _read_allow_rules(p)
+    return out
+
+def rule_matches(rule, tool, specifier):
+    """Supports the common rule forms: bare ToolName, ToolName(exact),
+    and prefix rules ToolName(prefix:*). Anything else is ignored."""
+    if rule == tool:
+        return True
+    if not (rule.startswith(tool + "(") and rule.endswith(")")):
+        return False
+    body = rule[len(tool) + 1:-1]
+    if body.endswith(":*"):
+        return specifier.startswith(body[:-2])
+    return specifier == body
+
+def would_prompt(tool, tool_input, cwd, permission_mode):
+    """Approximate: would Claude Code show a terminal permission prompt for
+    this call? Errs graceful both ways (see spec)."""
+    if permission_mode in ("bypassPermissions", "plan"):
+        return False
+    if permission_mode == "acceptEdits" and tool in EDIT_TOOLS:
+        return False
+    if not (tool in PROMPTY_TOOLS or tool.startswith("mcp__")):
+        return False
+    ti = tool_input or {}
+    if tool == "Bash":
+        specifier = (ti.get("command") or "").strip()
+    else:
+        specifier = ti.get("file_path") or ti.get("url") or ""
+    for rule in allow_rules_for(cwd):
+        try:
+            if rule_matches(rule, tool, specifier):
+                return False
+        except Exception:
+            continue
+    return True
 
 async def do_gate(agent, p):
     """Block a gated hook until the user clicks Allow/Deny, or time out.
     Returns one of: {gate:False} | {gate:True, decision:allow|deny|timeout}.
     Always records the action as a tool_use event so the feed stays live even
-    for ungated sessions (this hook replaces the plain PreToolUse reporter)."""
+    for unheld sessions (this hook replaces the plain PreToolUse reporter).
+
+    Modes: off = never hold. all = hold everything (strict remote control).
+    auto (claude-code default) = hold only calls Claude Code itself would
+    prompt for, and only while a dashboard client is watching — approving on
+    the dashboard pre-empts the terminal prompt entirely."""
     sid = gate_sid(agent, p)
     tool, summary = describe_action(agent, p)
     cwd = p.get("cwd") or (p.get("workspace_roots") or [None])[0]
-    if not is_gated(sid):
+    mode = effective_gate_mode(sid, agent)
+    if mode == "all":
+        hold = True
+    elif mode == "auto" and agent == "claude-code":
+        hold = bool(hub.clients) and would_prompt(
+            p.get("tool_name") or "", p.get("tool_input") or {},
+            cwd, p.get("permission_mode"))
+    else:
+        hold = False
+    if not hold:
         upsert_session(sid, agent, cwd=cwd, status="working")
         add_event(sid, "tool_use", summary)
         await hub.broadcast()
@@ -526,9 +635,48 @@ async def do_gate(agent, p):
     return {"gate": True,
             "decision": "allow" if r and r["status"] == "allowed" else "deny"}
 
+def add_always_rule(row):
+    """Append a conservative allow rule to the project's settings.local.json —
+    the same file Claude Code's own 'always allow' writes. Conservative on
+    purpose: Bash gets the exact command only, WebFetch the domain, other
+    tools the bare tool name."""
+    try:
+        detail = json.loads(row["detail"] or "{}")
+    except Exception:
+        detail = {}
+    cwd = detail.get("cwd")
+    tool = detail.get("tool_name") or row["tool"]
+    if not cwd or not tool:
+        return None
+    ti = detail.get("tool_input") or {}
+    if tool == "Bash":
+        cmd = (ti.get("command") or "").strip()
+        if not cmd:
+            return None
+        rule = f"Bash({cmd})"
+    elif tool == "WebFetch" and ti.get("url"):
+        host = re.sub(r"^\w+://", "", ti["url"]).split("/")[0]
+        rule = f"WebFetch(domain:{host})"
+    else:
+        rule = tool
+    path = Path(cwd) / ".claude" / "settings.local.json"
+    settings = {}
+    if path.exists():
+        try:
+            settings = json.loads(path.read_text())
+        except Exception:
+            return None  # never clobber a file we can't parse
+    allow = settings.setdefault("permissions", {}).setdefault("allow", [])
+    if rule not in allow:
+        allow.append(rule)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings, indent=2))
+    return rule
+
 async def do_decide(did, action):
-    """Resolve a pending decision. Returns (body, http_status)."""
-    if action not in ("allow", "deny"):
+    """Resolve a pending decision. Returns (body, http_status).
+    'always' additionally persists an allow rule, then allows."""
+    if action not in ("allow", "deny", "always"):
         return {"ok": False, "reason": "bad_action"}, 400
     with db() as c:
         row = c.execute("SELECT * FROM decisions WHERE id=?", (did,)).fetchone()
@@ -536,28 +684,37 @@ async def do_decide(did, action):
             return {"ok": False, "reason": "not_found"}, 404
         if row["status"] != "pending":
             return {"ok": False, "reason": "not_pending"}, 200
-        new_status = "allowed" if action == "allow" else "denied"
+        new_status = "denied" if action == "deny" else "allowed"
         c.execute("UPDATE decisions SET status=?, decided_at=? WHERE id=?",
                   (new_status, time.time(), did))
     sid = row["session_id"]
-    verb = "Allowed" if action == "allow" else "Denied"
+    rule = None
+    if action == "always":
+        try:
+            rule = add_always_rule(row)
+        except Exception:
+            rule = None
+    verb = {"allow": "Allowed", "deny": "Denied",
+            "always": "Always-allowed"}[action]
+    extra = f" (rule: {rule})" if rule else ""
     add_event(sid, "status_change",
-              f"{verb} from dashboard: {row['summary'] or row['tool']}")
+              f"{verb} from dashboard: {row['summary'] or row['tool']}{extra}")
     with db() as c:
         c.execute("UPDATE sessions SET status='working' WHERE session_id=?", (sid,))
     ev = pending.get(did)
     if ev:
         ev.set()
     await hub.broadcast()
-    return {"ok": True, "decision": new_status}, 200
+    return {"ok": True, "decision": new_status, "rule": rule}, 200
 
-async def do_set_gate(sid, on):
-    on = 1 if on else 0
+async def do_set_gate(sid, mode):
+    if mode not in GATE_MODES:
+        return {"ok": False, "reason": "bad_mode"}
     with db() as c:
-        c.execute("UPDATE sessions SET gated=? WHERE session_id=?", (on, sid))
-    add_event(sid, "status_change", f"Gating {'enabled' if on else 'disabled'}")
+        c.execute("UPDATE sessions SET gate_mode=? WHERE session_id=?", (mode, sid))
+    add_event(sid, "status_change", f"Gate mode set to {mode}")
     await hub.broadcast()
-    return {"ok": True, "gated": bool(on)}
+    return {"ok": True, "gate_mode": mode}
 
 # ---------------------------------------------------------------- tailers
 
@@ -634,7 +791,10 @@ def claude_line(path, obj):
             add_event(sid, "prompt", txt(text, 200))
     elif t == "assistant":
         model = msg.get("model")
-        upsert_session(sid, "claude-code", cwd=cwd, model=model, status="working")
+        # soft: this line may be the tool_use written right before a terminal
+        # permission prompt — it must not clear waiting_input (the stomp bug)
+        upsert_session(sid, "claude-code", cwd=cwd, model=model, status="working",
+                       soft=True)
         # usage: streaming writes several lines per message with the same
         # usage repeated — count each message id once
         usage = msg.get("usage") or {}
@@ -664,7 +824,7 @@ def codex_line(path, obj):
     sid = codex_line.last_sid.get(path) or Path(path).stem
     if t == "turn_context":
         upsert_session(sid, "codex", model=payload.get("model"),
-                       cwd=payload.get("cwd"), status="working")
+                       cwd=payload.get("cwd"), status="working", soft=True)
     elif t == "response_item":
         pt = payload.get("type")
         if pt == "message" and payload.get("role") == "user":
@@ -676,7 +836,7 @@ def codex_line(path, obj):
                 add_event(sid, "prompt", txt(text, 200))
         elif pt in ("function_call", "local_shell_call", "custom_tool_call"):
             name = payload.get("name") or pt
-            upsert_session(sid, "codex", status="working")
+            upsert_session(sid, "codex", status="working", soft=True)
             add_event(sid, "tool_use", txt(name, 140))
     elif t == "event_msg" and (payload.get("type") == "token_count"):
         # cumulative totals per session; store the delta since last seen (beta,
@@ -798,7 +958,10 @@ async def decision(did: int, req: Request):
 @app.post("/api/session/{sid}/gate")
 async def session_gate(sid: str, req: Request):
     p = await safe_json(req)
-    return await do_set_gate(sid, p.get("on"))
+    mode = p.get("mode")
+    if mode is None and "on" in p:  # back-compat with the old boolean API
+        mode = "all" if p.get("on") else "off"
+    return await do_set_gate(sid, mode)
 
 async def safe_json(req):
     try:

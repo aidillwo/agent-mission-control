@@ -103,20 +103,36 @@ remembered. First time you leave it on, your browser will ask permission.
 ## Allow / deny (gating)
 
 Approve or reject an agent's action from the dashboard instead of switching to
-its terminal. Gating is **opt-in per session**: each Claude Code and Cursor card
-has a **Gate** toggle (default off). Ungated sessions behave exactly as before.
+its terminal. Each Claude Code / Cursor card has a 3-state **gate chip**:
 
-When you turn gating on for a session, its next command/tool call pauses and the
-card shows the concrete action (e.g. `Bash rm -rf build/`) with **Allow** and
-**Deny** buttons. Click one and the agent proceeds or is refused. If you do not
-answer within `GATE_TIMEOUT_S` (120s), or the dashboard is down, the agent falls
-back to its own normal permission prompt — gating never blocks an agent
-permanently. Only an explicit Deny stops an action.
+| Mode | Behavior |
+|---|---|
+| **Auto** (default for Claude Code) | Holds **only the calls Claude Code itself would ask approval for** — read-only tools and anything matching your `permissions.allow` rules pass silently. Holds only while the dashboard is open in a browser; otherwise zero added latency. Approving on the dashboard pre-empts the terminal prompt entirely. |
+| **All** | Strict remote control: every command/tool call waits for your click. |
+| **Off** | Watch only, never hold. |
+
+Held actions show the concrete command with **Allow · Always · Deny** buttons.
+**Always** also appends a conservative allow rule to that project's
+`.claude/settings.local.json` (the same file Claude Code's own "always allow"
+writes), so it stops asking on both surfaces. If you don't answer within
+`GATE_TIMEOUT_S` (120s), or the dashboard is down, the agent falls back to its
+own terminal prompt — gating never blocks an agent permanently, and the card
+stays orange ("Waiting for you") so you know to switch to the terminal.
+
+Auto mode mirrors Claude Code's permission rules approximately (bare tool
+names, exact specifiers, and `prefix:*` Bash rules from global + project
+settings; `bypassPermissions` / `acceptEdits` / `plan` modes respected). Both
+failure directions are graceful: wrongly held → times out into the native
+flow; wrongly passed → the terminal prompts, visibly, on the dashboard.
+
+One boundary to know: Claude Code has no API to answer a prompt **already
+shown** in the terminal — the dashboard pre-empts prompts, it can't answer
+one that already fell through. The card staying orange is your cue.
 
 | Agent | Gating |
 |---|---|
-| Claude Code | Full (via the `PreToolUse` hook `cc_gate.py`, which also reports tool activity) |
-| Cursor | Shell/MCP executions (beta) |
+| Claude Code | Auto / All / Off (via the `PreToolUse` hook `cc_gate.py`, which also reports tool activity) |
+| Cursor | All / Off for shell/MCP executions (beta; no Auto — we can't read Cursor's permission rules) |
 | Codex | Not supported — its `notify` is one-way, so it can't wait for a remote decision. Codex still shows its waiting-for-approval state; you approve in Codex itself. |
 | Kiro | Deferred until validated against a live install |
 

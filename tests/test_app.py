@@ -1,6 +1,7 @@
 """Tests for Agent Deck. Run: .venv/bin/pytest -q"""
 import asyncio
 import importlib
+import json
 import sys
 import time
 from pathlib import Path
@@ -191,6 +192,8 @@ def _pending_id(sid="g1"):
 
 
 def test_gate_passthrough_when_not_gated(fresh_db):
+    # auto mode + no connected dashboard client => never hold
+    amc.hub.clients.clear()
     amc.upsert_session("u1", "claude-code", status="working")
     res = run(amc.do_gate("claude-code", {"session_id": "u1",
                                               "tool_name": "Bash",
@@ -198,21 +201,26 @@ def test_gate_passthrough_when_not_gated(fresh_db):
     assert res == {"gate": False}
     with amc.db() as c:
         n = c.execute("SELECT COUNT(*) n FROM decisions").fetchone()["n"]
-    assert n == 0  # no decision row created for ungated sessions
+    assert n == 0  # no decision row created for unheld sessions
 
 
-def test_set_gate_toggles_flag(fresh_db):
+def test_gate_modes_and_defaults(fresh_db):
     amc.upsert_session("g0", "claude-code", status="working")
-    run(amc.do_set_gate("g0", True))
-    assert amc.is_gated("g0") is True
-    run(amc.do_set_gate("g0", False))
-    assert amc.is_gated("g0") is False
+    amc.upsert_session("c0", "cursor", status="working")
+    assert amc.effective_gate_mode("g0", "claude-code") == "auto"  # cc default
+    assert amc.effective_gate_mode("c0", "cursor") == "off"       # others off
+    run(amc.do_set_gate("g0", "all"))
+    assert amc.effective_gate_mode("g0", "claude-code") == "all"
+    run(amc.do_set_gate("g0", "off"))
+    assert amc.effective_gate_mode("g0", "claude-code") == "off"
+    body = run(amc.do_set_gate("g0", "bogus"))
+    assert body["ok"] is False
 
 
 def _gate_roundtrip(action):
     async def scenario():
         amc.upsert_session("g1", "claude-code", status="working")
-        await amc.do_set_gate("g1", True)
+        await amc.do_set_gate("g1", "all")
         task = asyncio.create_task(amc.do_gate(
             "claude-code", {"session_id": "g1", "tool_name": "Bash",
                             "tool_input": {"command": "rm -rf build"}}))
@@ -253,7 +261,7 @@ def test_gate_timeout(fresh_db, monkeypatch):
 
     async def scenario():
         amc.upsert_session("g2", "claude-code", status="working")
-        await amc.do_set_gate("g2", True)
+        await amc.do_set_gate("g2", "all")
         return await amc.do_gate("claude-code",
                                  {"session_id": "g2", "tool_name": "Bash",
                                   "tool_input": {"command": "ls"}})
@@ -287,6 +295,104 @@ def test_cursor_gate_sid_and_summary(fresh_db):
     tool, summary = amc.describe_action("cursor", {"command": "npm run deploy"})
     assert tool == "command"
     assert "npm run deploy" in summary
+
+
+# ---------------------------------------------------------------- approval parity
+
+def test_tailer_does_not_stomp_waiting_input(fresh_db):
+    """The visibility bug: a transcript line arriving after a permission
+    Notification must not flip the card back to working."""
+    run(amc.handle_claude_code("Notification",
+                               {"session_id": "v1",
+                                "message": "Claude needs your permission to use Bash"}))
+    # tailer reads the assistant tool_use line moments later (soft)
+    amc.claude_line("/fake/v.jsonl",
+                    {"sessionId": "v1", "type": "assistant",
+                     "message": {"id": "m1", "model": "claude-opus-4-8",
+                                 "content": [{"type": "tool_use", "name": "Bash",
+                                              "input": {"command": "ls"}}]}})
+    with amc.db() as c:
+        row = c.execute("SELECT status,current_task FROM sessions "
+                        "WHERE session_id='v1'").fetchone()
+    assert row["status"] == "waiting_input"          # NOT stomped
+    assert row["current_task"] == "Needs approval: Bash"
+
+    # the tool actually running (PostToolUse hook) is real evidence => clears
+    run(amc.handle_claude_code("PostToolUse", {"session_id": "v1"}))
+    with amc.db() as c:
+        row = c.execute("SELECT status FROM sessions WHERE session_id='v1'").fetchone()
+    assert row["status"] == "working"
+
+
+def test_would_prompt_rules(fresh_db, tmp_path, monkeypatch):
+    monkeypatch.setattr(amc, "HOME", tmp_path / "nohome")  # no global settings
+    amc._rules_cache.clear()
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / ".claude" / "settings.json").write_text(json.dumps({
+        "permissions": {"allow": [
+            "Bash(ls)", "Bash(npm run test:*)", "WebFetch",
+            "weird-rule-(((", 42]}}))
+    cwd = str(proj)
+
+    wp = amc.would_prompt
+    assert wp("Read", {"file_path": "x"}, cwd, None) is False       # safe tool
+    assert wp("Bash", {"command": "ls"}, cwd, None) is False        # exact rule
+    assert wp("Bash", {"command": "npm run test --watch"}, cwd, None) is False  # prefix
+    assert wp("Bash", {"command": "rm -rf /"}, cwd, None) is True   # no rule
+    assert wp("WebFetch", {"url": "https://x.dev"}, cwd, None) is False  # bare rule
+    assert wp("Edit", {"file_path": "a.py"}, cwd, None) is True
+    assert wp("Edit", {"file_path": "a.py"}, cwd, "acceptEdits") is False
+    assert wp("Bash", {"command": "rm -rf /"}, cwd, "bypassPermissions") is False
+    assert wp("Bash", {"command": "rm -rf /"}, cwd, "plan") is False
+    assert wp("mcp__github__create_pr", {}, cwd, None) is True      # mcp held
+    assert wp("UnknownTool", {}, cwd, None) is False                # unknown passes
+
+
+def test_auto_mode_holds_only_would_prompt(fresh_db, tmp_path, monkeypatch):
+    monkeypatch.setattr(amc, "HOME", tmp_path / "nohome")
+    monkeypatch.setattr(amc, "GATE_TIMEOUT_S", 0.05)
+    amc._rules_cache.clear()
+    class FakeWS:  # survives hub.broadcast, unlike a bare object()
+        async def send_text(self, msg): pass
+    amc.hub.clients.add(FakeWS())  # a dashboard client is watching
+    try:
+        amc.upsert_session("a1", "claude-code", status="working")
+        # safe tool: passes straight through even in auto with a client
+        res = run(amc.do_gate("claude-code", {"session_id": "a1",
+                                              "tool_name": "Read",
+                                              "tool_input": {"file_path": "x"}}))
+        assert res == {"gate": False}
+        # would-prompt tool: held (times out with nobody clicking)
+        res = run(amc.do_gate("claude-code", {"session_id": "a1",
+                                              "tool_name": "Bash",
+                                              "tool_input": {"command": "rm -rf build"},
+                                              "cwd": str(tmp_path)}))
+        assert res == {"gate": True, "decision": "timeout"}
+    finally:
+        amc.hub.clients.clear()
+
+
+def test_always_appends_rule_and_allows(fresh_db, tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    with amc.db() as c:
+        c.execute("INSERT INTO decisions(session_id,tool,summary,detail,status,"
+                  "created_at) VALUES('s1','Bash','Bash npm test','"
+                  + json.dumps({"cwd": str(proj), "tool_name": "Bash",
+                                "tool_input": {"command": "npm test"}})
+                  + "','pending',1)")
+        did = c.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    amc.upsert_session("s1", "claude-code", status="waiting_input")
+
+    body, code = run(amc.do_decide(did, "always"))
+    assert code == 200 and body["ok"] is True
+    assert body["rule"] == "Bash(npm test)"
+    settings = json.loads((proj / ".claude" / "settings.local.json").read_text())
+    assert "Bash(npm test)" in settings["permissions"]["allow"]
+    # and the rule now suppresses future holds for that exact command
+    amc._rules_cache.clear()
+    assert amc.would_prompt("Bash", {"command": "npm test"}, str(proj), None) is False
 
 
 # ---------------------------------------------------------------- usage & history
