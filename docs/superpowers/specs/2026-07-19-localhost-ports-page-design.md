@@ -38,10 +38,10 @@ listeners simply won't appear. We do **not** escalate to sudo.
    scanner: the page polls every 4s *only while its tab is visible*
    (`visibilitychange` pauses it) plus a manual refresh. Zero cost when nobody's
    looking — this is what keeps it not-heavy.
-4. **Read-only this pass. Kill deferred.** No kill endpoint yet (user chose to
-   ship read-only first). The follow-up will add `POST /api/ports/{pid}/kill`
-   (SIGTERM→SIGKILL) behind a confirm dialog. Nothing in this page can change
-   system state.
+4. **Kill port — shipped (follow-up).** `POST /api/ports/{pid}/kill`, SIGTERM
+   then escalate to SIGKILL after 1.5s if it doesn't exit. See "Kill scope"
+   below. Frontend confirms (native `confirm()` showing app + PID + ports)
+   before firing, then toasts the result and rescans.
 5. **Open-in-browser per port.** Each listening port renders as a clickable
    chip/button that opens `http://localhost:<port>` in a new tab — the "what is
    this actually" affordance, and the headline interaction for this pass.
@@ -67,6 +67,25 @@ listeners simply won't appear. We do **not** escalate to sudo.
 `framework` is a best-effort substring guess over the cmdline (vite / next /
 react-scripts / webpack / uvicorn / flask / gunicorn / rails / astro / nuxt /
 http.server / …) — a label only, never load-bearing.
+
+## Kill scope (added 2026-07-19)
+
+**Project ports only** — the kill button renders only on `project_like` cards,
+and the endpoint enforces it server-side (three guards, defense-in-depth against
+PID reuse and crafted requests):
+
+1. `pid == os.getpid()` → 400 `self` (never kill the dashboard's own server).
+2. pid not a current listener in a fresh `scan_ports()` → 404 `not_listening`
+   (re-validates at kill time, shrinking the PID-reuse window; also means only
+   things actually shown on the page can be targeted).
+3. target not `project_like` → 403 `system` (never a macOS/GUI daemon).
+
+Rationale: the feature's job is freeing a stuck *dev* port. Non-project
+listeners are system daemons (ControlCenter/AirPlay, rapportd) and GUI apps —
+killing them from a dashboard is useless-to-harmful and they respawn. The rare
+non-project process you truly need to kill belongs in Activity Monitor. This
+keeps the same `project_like` notion behind both the default filter and the kill
+button. The default view is **Projects only** (`hideSystem = true` on load).
 
 ## Frontend (`static/ports.html`)
 
@@ -96,6 +115,9 @@ gated by a confirm.)
 - `framework_guess(cmdline)` maps known signatures and returns None otherwise.
 - `GET /api/ports` returns the documented shape with `servers`/`counts` keys
   (structure only — real listeners are environment-dependent).
+- Kill: refuses `os.getpid()` (400 `self`); refuses a non-project pid via a
+  monkeypatched scan (403 `system`); 404 when the pid isn't a current listener;
+  and a real happy-path — spawn a throwaway `sleep` process, monkeypatch scan to
+  claim it as a project listener, POST kill, assert the process actually exits.
 
-Out of scope: asserting specific live ports (machine-dependent), and the kill
-endpoint (next pass).
+Out of scope: asserting specific live ports (machine-dependent).

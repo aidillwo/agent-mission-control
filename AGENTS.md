@@ -18,7 +18,7 @@ never add external dependencies, CDNs, or network calls beyond localhost.
 |---|---|
 | `app.py` | The entire server: DB, intake normalizers, gating, tailers, endpoints, WS hub. Single file on purpose. |
 | `static/index.html` | The agent dashboard frontend: single file, vanilla JS, inline Lucide SVGs, no build step. |
-| `static/ports.html` | The localhost-ports page (`/ports`): sibling single file, same design tokens. Read-only listener view. |
+| `static/ports.html` | The localhost-ports page (`/ports`): sibling single file, same design tokens. Lists listeners; kills project ports. |
 | `hooks/cc_gate.py` | Claude Code PreToolUse hook — reports tool use AND gates (fail-open). |
 | `hooks/cursor_hook.sh`, `hooks/codex_notify.py`, `hooks/kiro_hook.sh` | Other agent forwarders. |
 | `install_hooks.py` | Idempotent installer; writes user-level agent configs, backs up to `*.amc.bak`. Also generates + loads the launchd LaunchAgent (`--launchd` / `--uninstall-launchd`). |
@@ -96,8 +96,10 @@ Dev server via Claude Code preview: launch config `amc` in `.claude/launch.json`
   user's localhost TCP listeners via `lsof` (no sudo; `psutil.net_connections`
   needs root on macOS), enriched per-PID with psutil. `GET /api/ports` is a
   **sync** path op so FastAPI threadpools the blocking scan; the page polls it
-  every 4s only while visible. Read-only — no kill endpoint yet (deferred,
-  see progress.md backlog + the spec).
+  every 4s only while visible and defaults to "Projects only".
+  `POST /api/ports/{pid}/kill` (SIGTERM→SIGKILL) kills **project ports only** —
+  three server-side guards (`self`/`system`/`not_listening`) mirror the UI,
+  which shows the kill button only on project, non-self cards.
 - **Usage/cost**: `daily_usage` table fed by tailers + webhook; `PRICES`
   table in app.py (estimates only). History drawer reads `/api/history`.
 - **Retention**: daily rollup+prune — events >14d aggregated into

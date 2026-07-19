@@ -1178,6 +1178,34 @@ def api_ports():
     # never stalls the event loop. Scanned on demand (page polls while visible).
     return scan_ports()
 
+@app.post("/api/ports/{pid}/kill")
+def api_kill_port(pid: int):
+    """Kill a localhost server. Guarded three ways: never our own server; only a
+    process currently shown on the ports page; and only project-owned listeners
+    (never a macOS/GUI system process). Re-scans at kill time so a recycled PID
+    can't be hit. SIGTERM first, escalate to SIGKILL if it doesn't exit."""
+    if pid == os.getpid():
+        return JSONResponse({"ok": False, "reason": "self"}, status_code=400)
+    target = next((s for s in scan_ports()["servers"] if s["pid"] == pid), None)
+    if not target:
+        return JSONResponse({"ok": False, "reason": "not_listening"}, status_code=404)
+    if not target["project_like"]:
+        return JSONResponse({"ok": False, "reason": "system"}, status_code=403)
+    try:
+        import psutil
+        p = psutil.Process(pid)
+        p.terminate()
+        try:
+            p.wait(timeout=1.5)
+            how = "terminated"
+        except psutil.TimeoutExpired:
+            p.kill()
+            how = "killed"
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": str(e)}, status_code=500)
+    return {"ok": True, "how": how, "pid": pid, "app": target["app"],
+            "project": target["project"], "ports": target["ports"]}
+
 @app.get("/summary")
 def summary():
     derive_statuses()

@@ -84,12 +84,18 @@ _Last updated: 2026-07-19_
   `psutil.net_connections` needs root on macOS) + psutil; `GET /api/ports` is a
   sync path op (threadpool), scanned on demand — the page polls every 4s only
   while visible. Each port renders as a link that opens `localhost:<port>` in a
-  new tab; own server badged "this dashboard". **Read-only this pass — kill
-  deferred** (next: `POST /api/ports/{pid}/kill` behind a confirm). Verified
-  live: 5 servers / 1 project / 9 ports, correct self/project/app classification,
-  "Projects only" filter, port links, no console errors.
-- **Tests**: 47 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
-  +3 bash-prefix (and `test_always_appends_rule` updated), +3 ports.
+  new tab; own server badged "this dashboard". Page **defaults to "Projects
+  only"** on load (`hideSystem = true`), hiding macOS/GUI apps.
+- **Kill port** (same spec, "Kill scope") — `POST /api/ports/{pid}/kill`
+  (SIGTERM→SIGKILL after 1.5s). **Project ports only**, enforced in the UI (kill
+  button on `project_like`, non-self cards) *and* server-side (3 guards: 400
+  `self` for our own server, 404 `not_listening` re-validated via fresh scan,
+  403 `system` for non-project pids). Confirm dialog → toast → rescan. Verified
+  live end-to-end: spawned a throwaway `http.server`, killed it from the page
+  (process actually died, port freed), and confirmed all three guards reject
+  (self 400 / ControlCenter 403 / bogus 404) while the dashboard stayed up.
+- **Tests**: 51 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
+  +3 bash-prefix (and `test_always_appends_rule` updated), +3 ports, +4 kill.
   Notification sound is frontend-only (no server surface) — verified live.
 - **Specs** committed under `docs/superpowers/specs/`.
 
@@ -120,10 +126,8 @@ _Last updated: 2026-07-19_
    names are guesses).
 4. ~~**Bash `prefix:*` "Always" rules**~~ — DONE (`safe_bash_prefix` +
    compound-command gate hardening). Extend the allowlists in `app.py` as needed.
-5. **Kill-port action on the Ports page** — the page shipped read-only (user's
-   call). Add `POST /api/ports/{pid}/kill` (SIGTERM→SIGKILL) + a confirm dialog
-   showing app/project/command; guard killing our own 7777 server (warn "kills
-   this page"). Spec §Decisions(4) in `2026-07-19-localhost-ports-page-design.md`.
+5. ~~**Kill-port action on the Ports page**~~ — DONE (project ports only,
+   `POST /api/ports/{pid}/kill` with self/system/not-listening guards + confirm).
 6. **Notch / menu-bar native app** — deferred; SwiftBar plugin covers ~80%.
    This is the surface that could eventually answer already-shown terminal
    prompts (keystroke injection) — explicitly out of scope for now.

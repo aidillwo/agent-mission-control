@@ -83,10 +83,22 @@ h2{font-family:var(--display);font-weight:700;font-size:1.05rem;margin-bottom:12
   font-size:.7rem;opacity:.72}
 .card .cmd{font-family:var(--mono);font-size:.68rem;opacity:.6;margin-top:8px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grow{flex:1}
+.kill{border:2px solid var(--ink);border-radius:10px;background:var(--coral-soft);
+  box-shadow:2px 2px 0 var(--ink);padding:5px 11px;font-weight:700;font-size:.75rem;
+  display:inline-flex;gap:5px;align-items:center;transition:transform .08s}
+.kill:hover{background:var(--coral);color:#fff}
+.kill:active{transform:translate(2px,2px);box-shadow:none}
+.kill:disabled{opacity:.6;cursor:default}
 
 .empty{border:2px dashed var(--ink);border-radius:var(--r);padding:40px;text-align:center;
   opacity:.75;font-size:1rem}
 .hint{font-family:var(--mono);font-size:.72rem;opacity:.6;margin-top:18px}
+#toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(120%);
+  background:var(--ink);color:#fff;border-radius:12px;padding:11px 18px;font-weight:600;
+  font-size:.85rem;box-shadow:var(--shadow);transition:transform .25s;max-width:90vw;z-index:20}
+#toast.show{transform:translateX(-50%) translateY(0)}
+#toast.err{background:var(--coral)}
 </style>
 </head>
 <body>
@@ -115,12 +127,13 @@ h2{font-family:var(--display);font-weight:700;font-size:1.05rem;margin-bottom:12
 <h2><span class="dot" style="background:var(--blue)"></span>Localhost servers</h2>
 <div class="grid" id="grid"></div>
 <div class="empty" id="emptyState" hidden>No localhost servers listening (that you own).</div>
-<div class="hint">Click a port to open <code>localhost:&lt;port&gt;</code> in a new tab. Read-only for now — a kill-port action is coming next. Only your own processes are shown (no sudo).</div>
+<div class="hint">Click a port to open <code>localhost:&lt;port&gt;</code> in a new tab. <b>Kill</b> stops a project's server (project ports only — system/macOS apps are protected). Only your own processes are shown (no sudo).</div>
 </div>
+<div id="toast"></div>
 
 <script>
 const $=s=>document.querySelector(s);
-let hideSystem=false, timer=null;
+let hideSystem=true, timer=null;   // default: show only project servers
 
 function esc(s){return (s??'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function fmtUptime(s){
@@ -148,8 +161,13 @@ function render(data){
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg></a>`).join('');
     const meta=[`PID ${s.pid}`, s.mem_mb!=null?`${s.mem_mb} MB`:null, s.uptime_s!=null?`up ${fmtUptime(s.uptime_s)}`:null]
       .filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join('');
+    // kill only for project servers, never the dashboard's own process
+    const kill=(s.project_like && !s.is_self)
+      ? `<button class="kill" data-pid="${s.pid}" data-app="${esc(s.app)}" data-ports="${s.ports.join(',')}" title="Stop this server">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>Kill</button>`
+      : '';
     return `<div class="card ${cls}">
-      <div class="row1"><span class="app">${esc(s.app)}</span>${fw}${badge}</div>
+      <div class="row1"><span class="app">${esc(s.app)}</span>${fw}${badge}<span class="grow"></span>${kill}</div>
       <div class="ports">${chips}</div>
       <div class="meta">${meta}</div>
       <div class="cmd" title="${esc(s.cmd)}">${esc(s.cmd)}</div>
@@ -164,18 +182,38 @@ async function scan(){
   }catch(e){ $('#scanned').textContent='scan failed'; }
 }
 
-$('#refreshBtn').onclick=scan;
-$('#filterBtn').onclick=()=>{
-  hideSystem=!hideSystem;
+let toastTimer=null;
+function toast(msg,err){
+  const t=$('#toast'); t.textContent=msg; t.classList.toggle('err',!!err); t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),3200);
+}
+
+function syncFilterBtn(){
   $('#filterBtn').classList.toggle('on',hideSystem);
   $('#filterBtn').setAttribute('aria-pressed',hideSystem);
   $('#filterBtn').querySelector('span').textContent=hideSystem?'Projects':'All';
+}
+$('#refreshBtn').onclick=scan;
+$('#filterBtn').onclick=()=>{ hideSystem=!hideSystem; syncFilterBtn(); scan(); };
+
+// kill (event delegation) — project servers only; confirm before firing
+$('#grid').addEventListener('click',async e=>{
+  const b=e.target.closest('.kill'); if(!b)return;
+  const {pid,app,ports}=b.dataset;
+  const portList=ports.split(',').map(p=>':'+p).join(', ');
+  if(!confirm(`Kill ${app} (PID ${pid}) on ${portList}?\nThis stops the process.`))return;
+  b.disabled=true; b.lastChild.textContent=' Killing…';
+  try{
+    const r=await fetch(`/api/ports/${pid}/kill`,{method:'POST'}).then(r=>r.json());
+    if(r.ok)toast(`${r.how} ${app} — freed ${portList}`);
+    else toast(`Couldn't kill ${app}: ${r.reason}`,true);
+  }catch(err){ toast('Kill request failed',true); }
   scan();
-};
+});
 
 function loop(){ clearInterval(timer); timer=setInterval(()=>{ if(!document.hidden)scan(); },4000); }
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden)scan(); });
-scan(); loop();
+syncFilterBtn(); scan(); loop();
 </script>
 </body>
 </html>

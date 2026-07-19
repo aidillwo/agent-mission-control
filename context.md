@@ -118,7 +118,12 @@ token/cost estimates, daily digests.
     visible) so it adds zero background cost. Shipped **read-only** at the
     user's request; kill-port deferred to a later pass with a confirm dialog.
     Uses `lsof` not sudo, so only the user's own processes appear (the right
-    scope for their dev servers).
+    scope for their dev servers). **Kill port** followed shortly after, scoped
+    to **project ports only** (user asked "project or all?" → project: the
+    non-project listeners are macOS daemons/GUI apps where a kill is
+    useless-to-harmful and they respawn). Enforced in the UI (button on project,
+    non-self cards) and server-side (self/system/not-listening guards, re-scan
+    at kill time vs PID reuse). Page defaults to a Projects-only view.
 
 ## Style / working preferences observed
 

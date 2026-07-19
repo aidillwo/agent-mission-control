@@ -196,8 +196,15 @@ so you see just your own dev servers; your Agent Deck server is badged.
 It uses `lsof` (no `sudo`), so it shows **only your own processes** — exactly the
 dev servers you care about; root-owned listeners don't appear. The scan runs
 on demand (the page polls every few seconds only while open), so it costs
-nothing when you're not looking. Read-only for now; a kill-port button is the
-next addition.
+nothing when you're not looking. The page defaults to a **Projects only** view
+(macOS/GUI apps hidden); toggle it to see everything.
+
+**Kill a stuck port:** project servers have a **Kill** button (SIGTERM, then
+SIGKILL if needed) behind a confirm dialog — for those "port 3000 already in
+use" moments. It's deliberately limited to *project* ports: system/macOS
+processes (AirPlay, Handoff, apps like Spotify) are protected and have no kill
+button, and the dashboard refuses to kill its own server. The kill endpoint
+enforces all of this server-side too, not just in the UI.
 
 ## Endpoints
 
@@ -206,6 +213,7 @@ next addition.
 | `GET /` | Agent dashboard |
 | `GET /ports` | Localhost ports page |
 | `GET /api/ports` | Localhost TCP listeners, enriched (app, project, ports, mem, uptime) |
+| `POST /api/ports/{pid}/kill` | Kill a project server (project ports only; self/system protected) |
 | `GET /api/state` | Full state snapshot (also the polling fallback) |
 | `GET /api/session/{id}/events` | One session's full timeline |
 | `GET /api/daily` | Events per day per agent, last 7 days (feeds the 7-day panel) |

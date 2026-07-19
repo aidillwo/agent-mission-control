@@ -2,6 +2,8 @@
 import asyncio
 import importlib
 import json
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -457,6 +459,41 @@ def test_ports_page_and_api(client):
     assert set(data) >= {"scanned_at", "servers", "counts"}
     assert set(data["counts"]) == {"servers", "projects", "ports"}
     assert isinstance(data["servers"], list)
+
+
+def test_kill_port_refuses_self(client):
+    r = client.post(f"/api/ports/{os.getpid()}/kill")
+    assert r.status_code == 400 and r.json()["reason"] == "self"
+
+
+def test_kill_port_refuses_system(client, monkeypatch):
+    monkeypatch.setattr(amc, "scan_ports", lambda: {"servers": [
+        {"pid": 424242, "app": "Spotify", "project": None,
+         "project_like": False, "ports": [7768], "is_self": False}]})
+    r = client.post("/api/ports/424242/kill")
+    assert r.status_code == 403 and r.json()["reason"] == "system"
+
+
+def test_kill_port_not_listening(client, monkeypatch):
+    monkeypatch.setattr(amc, "scan_ports", lambda: {"servers": []})
+    r = client.post("/api/ports/424242/kill")
+    assert r.status_code == 404 and r.json()["reason"] == "not_listening"
+
+
+def test_kill_port_terminates_project_process(client, monkeypatch):
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    monkeypatch.setattr(amc, "scan_ports", lambda: {"servers": [
+        {"pid": proc.pid, "app": "python", "project": "demo",
+         "project_like": True, "ports": [9999], "is_self": False}]})
+    try:
+        r = client.post(f"/api/ports/{proc.pid}/kill")
+        assert r.status_code == 200 and r.json()["ok"]
+        assert r.json()["how"] in ("terminated", "killed")
+        proc.wait(timeout=3)
+        assert proc.poll() is not None  # actually dead
+    finally:
+        if proc.poll() is None:
+            proc.kill()
 
 
 def test_prefix_rule_not_trusted_for_compound(fresh_db, tmp_path, monkeypatch):
