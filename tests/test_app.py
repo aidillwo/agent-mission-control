@@ -593,6 +593,51 @@ def test_token_breakdown_by_agent_and_provider(fresh_db):
     assert [r["agent"] for r in by_agent] == ["claude-code", "codex", "custom"]
 
 
+def test_usage_report_groups_by_model_and_totals(fresh_db):
+    today = amc.local_day()
+    yesterday = amc.local_day(time.time() - 86400)
+    with amc.db() as c:
+        c.execute("INSERT INTO daily_usage(day,agent,model,tokens_in,tokens_out) "
+                  "VALUES(?,?,?,?,?)", (today, "claude-code", "claude-opus-4-8", 1000, 200))
+        c.execute("INSERT INTO daily_usage(day,agent,model,tokens_in,tokens_out) "
+                  "VALUES(?,?,?,?,?)", (yesterday, "codex", "gpt-5-codex", 500, 100))
+
+    report = amc.usage_report(7, "model")
+
+    assert report["range"] == "7d"
+    assert report["group_by"] == "model"
+    assert report["totals"]["tokens_in"] == 1500
+    assert report["totals"]["tokens_out"] == 300
+    assert report["totals"]["total_tokens"] == 1800
+    assert report["totals"]["est_cost"] is not None
+    assert [r["model"] for r in report["rows"]] == ["claude-opus-4-8", "gpt-5-codex"]
+    assert report["daily"][0]["day"] == today
+
+
+def test_usage_report_provider_unknown_cost(fresh_db):
+    amc.add_usage("custom", "mystery-model", 100, 25)
+    amc.add_usage("codex", "gpt-5-codex", 200, 50)
+
+    report = amc.usage_report(30, "provider")
+    providers = {r["provider"]: r for r in report["rows"]}
+
+    assert providers["Other"]["tokens_in"] == 100
+    assert providers["Other"]["est_cost"] is None
+    assert providers["OpenAI"]["tokens_in"] == 200
+    assert report["totals"]["has_unknown_cost"] is True
+
+
+def test_usage_endpoint_normalizes_params(fresh_db):
+    amc.add_usage("claude-code", "claude-sonnet-5", 10, 5)
+    client = TestClient(amc.app)
+
+    body = client.get("/api/usage?days=999&group_by=bogus").json()
+
+    assert body["range"] == "30d"
+    assert body["group_by"] == "day"
+    assert set(body) == {"range", "group_by", "totals", "rows", "daily"}
+
+
 def test_add_usage_accumulates(fresh_db):
     amc.add_usage("claude-code", "claude-opus-4-8", 100, 50)
     amc.add_usage("claude-code", "claude-opus-4-8", 10, 5)

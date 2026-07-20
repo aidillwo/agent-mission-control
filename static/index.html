@@ -68,6 +68,8 @@ h1{font-family:var(--display);font-weight:700;font-size:1.35rem;letter-spacing:-
 .t-done{background:var(--lime)}
 .t-tools{background:var(--teal-soft)}
 .t-usage{background:var(--lav-soft)}
+.tile.action{cursor:pointer}
+.tile.action:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
 @keyframes throb{0%,100%{box-shadow:var(--shadow)}50%{box-shadow:4px 4px 0 var(--ink),0 0 0 7px rgba(255,138,0,.35)}}
 
 /* filters */
@@ -218,6 +220,22 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
 .hist .cost{color:var(--lime-deep);font-weight:700}
 .hist-sub{font-family:var(--display);font-weight:700;font-size:.78rem;
   text-transform:uppercase;letter-spacing:.04em;margin-top:18px;opacity:.75}
+.usage-controls{display:flex;flex-direction:column;gap:8px;margin:16px 0}
+.usage-controls .chiprow{gap:6px}
+.usage-controls .chip{font-size:.72rem;padding:4px 10px}
+.usage-metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+.usage-metric{border:2px solid var(--ink);border-radius:12px;background:var(--card);
+  padding:10px 12px;box-shadow:2px 2px 0 var(--ink)}
+.usage-metric .label{font-family:var(--mono);font-size:.62rem;text-transform:uppercase;
+  letter-spacing:.07em;opacity:.65}
+.usage-metric .value{font-family:var(--display);font-weight:700;font-size:1.25rem}
+.usage-chart{display:flex;align-items:flex-end;gap:5px;height:120px;margin-top:12px}
+.usage-chart .bar{flex:1;min-width:6px;background:var(--lav);border:2px solid var(--ink);
+  border-radius:7px 7px 0 0;position:relative}
+.usage-chart .bar:hover::after{content:attr(data-tip);position:absolute;bottom:105%;left:50%;
+  transform:translateX(-50%);background:var(--ink);color:var(--bg);font-family:var(--mono);
+  font-size:.62rem;padding:2px 7px;border-radius:6px;white-space:nowrap;z-index:5}
+.usage-note{font-family:var(--mono);font-size:.68rem;opacity:.7;margin-top:8px}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
@@ -248,7 +266,8 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
     <div class="num" id="nDone">0</div><div class="sub">finished turns and sessions</div></div>
   <div class="tile t-tools"><div class="lbl">Tool calls today</div>
     <div class="num" id="nTools">0</div><div class="sub">edits, commands, searches</div></div>
-  <div class="tile t-usage"><div class="lbl">Tokens today</div>
+  <div class="tile t-usage action" id="tileUsage" role="button" tabindex="0" title="Open token usage">
+    <div class="lbl">Tokens today</div>
     <div class="num" id="nTokens">0</div><div class="sub" id="nCost">estimates from PRICES in app.py</div></div>
 </section>
 
@@ -302,6 +321,45 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
   <div class="hist-sub">By day</div>
   <table class="hist" id="histTable">
     <thead><tr><th>Day</th><th>Events</th><th>Tools</th><th>Done</th><th>Tokens</th><th>Est&nbsp;cost</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</aside>
+<aside class="drawer" id="usageDrawer" aria-label="Token usage">
+  <button class="close" id="usageClose" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  <h3>Usage</h3>
+  <div class="model">tokens and estimated cost from local logs</div>
+
+  <div class="usage-controls">
+    <div class="hist-sub">Range</div>
+    <div class="chiprow" id="usageRanges">
+      <button class="chip" data-days="1">Today</button>
+      <button class="chip" data-days="7">7d</button>
+      <button class="chip" data-days="30">30d</button>
+      <button class="chip" data-days="0">All</button>
+    </div>
+    <div class="hist-sub">Group by</div>
+    <div class="chiprow" id="usageGroups">
+      <button class="chip" data-group="day">Date</button>
+      <button class="chip" data-group="model">Model</button>
+      <button class="chip" data-group="agent">Agent</button>
+      <button class="chip" data-group="provider">Provider</button>
+    </div>
+  </div>
+
+  <div class="usage-metrics">
+    <div class="usage-metric"><div class="label">Total</div><div class="value" id="uTotal">0</div></div>
+    <div class="usage-metric"><div class="label">Est cost</div><div class="value" id="uCost">$0.00</div></div>
+    <div class="usage-metric"><div class="label">Input</div><div class="value" id="uIn">0</div></div>
+    <div class="usage-metric"><div class="label">Output</div><div class="value" id="uOut">0</div></div>
+  </div>
+
+  <div class="hist-sub">Daily usage</div>
+  <div class="usage-chart" id="usageChart"></div>
+  <div class="usage-note" id="usageNote"></div>
+
+  <div class="hist-sub" id="usageTableTitle">Grouped usage</div>
+  <table class="hist" id="usageTable">
+    <thead><tr><th>Group</th><th>In</th><th>Out</th><th>Total</th><th>Est&nbsp;cost</th></tr></thead>
     <tbody></tbody>
   </table>
 </aside>
@@ -624,6 +682,75 @@ async function openHistory(){
 $('#histBtn').onclick=openHistory;
 $('#histClose').onclick=()=>{$('#overlay').classList.remove('open');$('#histDrawer').classList.remove('open')};
 
+/* ---------- usage drawer ---------- */
+let usageDays=1, usageGroup='day';
+const GROUP_LABEL={day:'Date',model:'Model',agent:'Agent',provider:'Provider'};
+function syncUsageControls(){
+  document.querySelectorAll('#usageRanges .chip').forEach(b=>
+    b.setAttribute('aria-pressed',Number(b.dataset.days)===usageDays));
+  document.querySelectorAll('#usageGroups .chip').forEach(b=>
+    b.setAttribute('aria-pressed',b.dataset.group===usageGroup));
+}
+function usageKey(row){
+  return row[usageGroup] || row.day || row.model || row.agent || row.provider || 'unknown';
+}
+function renderUsage(data){
+  const t=data.totals||{tokens_in:0,tokens_out:0,total_tokens:0,est_cost:null};
+  $('#uTotal').textContent=fmtTokens(t.total_tokens||0);
+  $('#uIn').textContent=fmtTokens(t.tokens_in||0);
+  $('#uOut').textContent=fmtTokens(t.tokens_out||0);
+  $('#uCost').textContent=t.est_cost!=null?'$'+t.est_cost.toFixed(2):'—';
+  $('#usageNote').textContent=t.has_unknown_cost
+    ?'Some models have no price entry, so cost is partial.'
+    :'Costs are estimates from PRICES in app.py.';
+  $('#usageTableTitle').textContent=`Grouped by ${GROUP_LABEL[data.group_by]||data.group_by}`;
+
+  const daily=data.daily||[];
+  const max=Math.max(1,...daily.map(d=>d.total_tokens||0));
+  $('#usageChart').innerHTML=daily.slice().reverse().map(d=>`
+    <div class="bar" style="height:${Math.max(3,(d.total_tokens||0)/max*100)}%"
+      data-tip="${esc(d.day)} · ${fmtTokens(d.total_tokens||0)}"></div>`).join('')
+      ||'<div class="usage-note">No usage yet.</div>';
+
+  $('#usageTable tbody').innerHTML=(data.rows||[]).map(r=>`<tr>
+    <td>${esc(usageKey(r))}</td>
+    <td>${fmtTokens(r.tokens_in||0)}</td>
+    <td>${fmtTokens(r.tokens_out||0)}</td>
+    <td>${fmtTokens(r.total_tokens||0)}</td>
+    <td class="cost">${costCell(r.est_cost)}</td>
+  </tr>`).join('')||'<tr><td colspan="5">No usage yet.</td></tr>';
+}
+async function loadUsage(){
+  syncUsageControls();
+  $('#usageTable tbody').innerHTML='<tr><td colspan="5">Loading…</td></tr>';
+  $('#usageChart').innerHTML='';
+  try{
+    const data=await fetch(`/api/usage?days=${usageDays}&group_by=${usageGroup}`).then(r=>r.json());
+    usageGroup=data.group_by||usageGroup;
+    renderUsage(data);
+    syncUsageControls();
+  }catch(e){
+    $('#usageTable tbody').innerHTML='<tr><td colspan="5">Failed to load.</td></tr>';
+  }
+}
+function openUsage(){
+  $('#overlay').classList.add('open');$('#usageDrawer').classList.add('open');
+  loadUsage();
+}
+$('#tileUsage').onclick=openUsage;
+$('#tileUsage').addEventListener('keydown',e=>{
+  if(e.key==='Enter'||e.key===' '){e.preventDefault();openUsage();}
+});
+$('#usageRanges').onclick=e=>{
+  const b=e.target.closest('.chip'); if(!b)return;
+  usageDays=Number(b.dataset.days); loadUsage();
+};
+$('#usageGroups').onclick=e=>{
+  const b=e.target.closest('.chip'); if(!b)return;
+  usageGroup=b.dataset.group; loadUsage();
+};
+$('#usageClose').onclick=()=>{$('#overlay').classList.remove('open');$('#usageDrawer').classList.remove('open')};
+
 /* ---------- interactions ---------- */
 $('#filters').onclick=e=>{
   const b=e.target.closest('.chip'); if(!b)return;
@@ -663,7 +790,8 @@ $('#grid').addEventListener('keydown',e=>{
     e.preventDefault();e.target.click();}
 });
 function closeDrawer(){$('#overlay').classList.remove('open');
-  $('#drawer').classList.remove('open');$('#histDrawer').classList.remove('open')}
+  $('#drawer').classList.remove('open');$('#histDrawer').classList.remove('open');
+  $('#usageDrawer').classList.remove('open')}
 $('#overlay').onclick=closeDrawer;
 $('#drawerClose').onclick=closeDrawer;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});

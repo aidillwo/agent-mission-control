@@ -104,6 +104,15 @@ _Last updated: 2026-07-19_
   "Tokens by agent" and "Tokens by provider" tables above the per-day one.
   Verified live with seeded usage (Anthropic/OpenAI split rendered correctly,
   no console errors); test data removed from the live DB afterward.
+- **Token usage drilldown** (spec
+  `2026-07-20-token-usage-drilldown-design.md`) — clicking the "Tokens today"
+  tile now opens a Usage drawer with range controls (today / 7d / 30d / all),
+  grouping by date/model/agent/provider, headline input/output/total/cost
+  metrics, a daily bar chart, and a grouped table. New `/api/usage` endpoint
+  returns normalized totals, grouped rows, and daily chart rows from
+  `daily_usage`; unknown model prices set `has_unknown_cost` and show partial
+  cost rather than hiding tokens. Project/session grouping deferred until usage
+  capture stores those ids.
 - **README quick start now uses a venv** (`python3 -m venv .venv` +
   `.venv/bin/pip install`) instead of a bare `pip install` — verified via a
   simulated fresh clone that the old bare-`pip` instructions risk
@@ -119,10 +128,10 @@ _Last updated: 2026-07-19_
   server-side `confirm:true` requirement. The API responds first, then
   terminates the server after a short delay. Added `scripts/kill_port.sh` as a
   CLI fallback for later manual port cleanup.
-- **Tests**: 56 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
+- **Tests**: 59 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
   +3 bash-prefix (and `test_always_appends_rule` updated), +3 ports, +4 kill,
   +2 token-breakdown (and `test_history_endpoint` updated), +2 Claude question
-  prompt, +1 confirmed self-kill.
+  prompt, +1 confirmed self-kill, +3 usage drilldown.
   Notification sound is frontend-only (no server surface) — verified live.
 - **Specs** committed under `docs/superpowers/specs/`.
 

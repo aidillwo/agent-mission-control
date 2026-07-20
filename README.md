@@ -161,20 +161,25 @@ one that already fell through. The card staying orange is your cue.
 
 ## History, tokens & cost
 
-The **History** button in the header opens a drawer with three views over the
-last 30 days: **tokens by agent** (Claude Code / Codex / Cursor / custom),
-**tokens by provider** (Anthropic / OpenAI / Other, derived from the model
-name — a Cursor or custom session can run either vendor's model, so provider
-is tracked separately from which tool ran it), and the original **per-day**
-digest of events, tool calls, completions, and tokens. The "Tokens today" tile
-shows the running total.
+The **Tokens today** tile opens a dedicated Usage drawer with date ranges
+(today / 7d / 30d / all), grouping by **date**, **model**, **agent**, or
+**provider**, headline input/output/total token counts, estimated cost, a daily
+bar chart, and a grouped table. Provider is derived from the model name — a
+Cursor or custom session can run either vendor's model, so provider is tracked
+separately from which tool ran it.
+
+The **History** button in the header opens the broader activity drawer with the
+last 30 days: tokens by agent, tokens by provider, and the original per-day
+digest of events, tool calls, completions, and tokens.
 
 Token usage is collected automatically from Claude Code transcripts and Codex
 rollout logs (beta), and from custom bots that report `tokens_in`/`tokens_out`
 on `/ingest`. Costs are **estimates** from the static `PRICES` table at the
 top of `app.py` (USD per MTok, substring-matched on model name) — edit it when
 prices change. Cache discounts are not modeled; unknown models show tokens
-without a cost, and group under "Other" in the by-provider view.
+without a cost, and group under "Other" in the by-provider view. Project/session
+usage grouping is not in v1 because the usage table stores day, agent, and
+model, not project/session ids.
 
 ## Retention
 
@@ -230,6 +235,7 @@ enforces all of this server-side too, not just in the UI.
 | `GET /api/session/{id}/events` | One session's full timeline |
 | `GET /api/daily` | Events per day per agent, last 7 days (feeds the 7-day panel) |
 | `GET /api/history?days=30` | Per-day digest + token totals by agent and by provider |
+| `GET /api/usage?days=30&group_by=model` | Token/cost drilldown grouped by day, model, agent, or provider |
 | `GET /summary` | Compact counts for menu bar / notch |
 | `WS /ws` | Live push |
 | `POST /ingest` | Generic webhook |

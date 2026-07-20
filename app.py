@@ -105,6 +105,86 @@ def token_breakdown(days=30):
         return rows
     return finalize(by_agent, "agent"), finalize(by_provider, "provider")
 
+USAGE_GROUPS = ("day", "model", "agent", "provider")
+USAGE_DAYS = {0: "all", 1: "today", 7: "7d", 30: "30d", 365: "365d"}
+
+def _usage_cutoff(days):
+    return None if days == 0 else local_day(time.time() - (days - 1) * 86400)
+
+def usage_report(days=30, group_by="day"):
+    days = days if days in USAGE_DAYS else 30
+    group_by = group_by if group_by in USAGE_GROUPS else "day"
+    cutoff = _usage_cutoff(days)
+    grouped, daily = {}, {}
+    totals = {"tokens_in": 0, "tokens_out": 0, "total_tokens": 0,
+              "est_cost": None, "has_unknown_cost": False}
+
+    sql = "SELECT day, agent, model, tokens_in, tokens_out FROM daily_usage"
+    args = ()
+    if cutoff:
+        sql += " WHERE day>=?"
+        args = (cutoff,)
+    with db() as c:
+        rows = [dict(r) for r in c.execute(sql, args)]
+
+    known_costs = []
+    for r in rows:
+        tin, tout = r["tokens_in"] or 0, r["tokens_out"] or 0
+        total = tin + tout
+        cost = est_cost(r["model"], tin, tout)
+        if cost is None and total:
+            totals["has_unknown_cost"] = True
+        else:
+            known_costs.append(cost)
+        totals["tokens_in"] += tin
+        totals["tokens_out"] += tout
+        totals["total_tokens"] += total
+
+        d = daily.setdefault(r["day"], {"day": r["day"], "tokens_in": 0,
+                                        "tokens_out": 0, "costs": [],
+                                        "has_unknown_cost": False})
+        d["tokens_in"] += tin
+        d["tokens_out"] += tout
+        if cost is None and total:
+            d["has_unknown_cost"] = True
+        else:
+            d["costs"].append(cost)
+
+        if group_by == "provider":
+            key = provider_of(r["model"])
+        else:
+            key = r[group_by] or "unknown"
+        g = grouped.setdefault(key, {group_by: key, "tokens_in": 0,
+                                    "tokens_out": 0, "costs": [],
+                                    "has_unknown_cost": False})
+        g["tokens_in"] += tin
+        g["tokens_out"] += tout
+        if cost is None and total:
+            g["has_unknown_cost"] = True
+        else:
+            g["costs"].append(cost)
+
+    if known_costs:
+        totals["est_cost"] = round(sum(known_costs), 4)
+
+    def finish(row):
+        costs = row.pop("costs")
+        row["total_tokens"] = row["tokens_in"] + row["tokens_out"]
+        row["est_cost"] = round(sum(costs), 4) if costs else None
+        return row
+
+    out_rows = [finish(dict(v)) for v in grouped.values()]
+    if group_by == "day":
+        out_rows.sort(key=lambda r: r["day"], reverse=True)
+    else:
+        out_rows.sort(key=lambda r: r["total_tokens"], reverse=True)
+
+    daily_rows = [finish(dict(v)) for v in daily.values()]
+    daily_rows.sort(key=lambda r: r["day"], reverse=True)
+
+    return {"range": USAGE_DAYS[days], "group_by": group_by,
+            "totals": totals, "rows": out_rows, "daily": daily_rows}
+
 def local_day(ts=None):
     return datetime.datetime.fromtimestamp(ts or time.time()).strftime("%Y-%m-%d")
 
@@ -1237,6 +1317,10 @@ def api_history(days: int = 30):
     n = min(max(days, 1), 365)
     by_agent, by_provider = token_breakdown(n)
     return {"days": history_days(n), "by_agent": by_agent, "by_provider": by_provider}
+
+@app.get("/api/usage")
+def api_usage(days: int = 30, group_by: str = "day"):
+    return usage_report(days, group_by)
 
 @app.get("/api/daily")
 def api_daily():
