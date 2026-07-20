@@ -110,9 +110,19 @@ _Last updated: 2026-07-19_
   `externally-managed-environment` on Homebrew Python, while a venv always
   works. `install_hooks.py`/`fake_agent.py` stay on plain `python3` (genuinely
   stdlib-only, confirmed by reading their imports).
-- **Tests**: 53 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
+- **Claude yes/no prompt resurfacing** — Claude Code `AskUserQuestion` tool
+  calls now mark the session `waiting_input` and notify, both through the
+  PreToolUse gate path and the JSONL tailer. These prompts still resolve in the
+  CLI; Agent Deck surfaces them so the user knows to go choose there.
+- **Port 7777 self-kill** — Ports page now shows a Kill button for Agent Deck's
+  own fixed `7777` listener, guarded by an in-page No / Yes modal and a
+  server-side `confirm:true` requirement. The API responds first, then
+  terminates the server after a short delay. Added `scripts/kill_port.sh` as a
+  CLI fallback for later manual port cleanup.
+- **Tests**: 56 passing (`.venv/bin/pytest -q`) — +4 launchd, +3 proc-card,
   +3 bash-prefix (and `test_always_appends_rule` updated), +3 ports, +4 kill,
-  +2 token-breakdown (and `test_history_endpoint` updated).
+  +2 token-breakdown (and `test_history_endpoint` updated), +2 Claude question
+  prompt, +1 confirmed self-kill.
   Notification sound is frontend-only (no server surface) — verified live.
 - **Specs** committed under `docs/superpowers/specs/`.
 

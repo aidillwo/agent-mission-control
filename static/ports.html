@@ -99,6 +99,16 @@ h2{font-family:var(--display);font-weight:700;font-size:1.05rem;margin-bottom:12
   font-size:.85rem;box-shadow:var(--shadow);transition:transform .25s;max-width:90vw;z-index:20}
 #toast.show{transform:translateX(-50%) translateY(0)}
 #toast.err{background:var(--coral)}
+.modalBackdrop{position:fixed;inset:0;background:rgba(23,32,59,.32);display:none;
+  place-items:center;padding:20px;z-index:30}
+.modalBackdrop.show{display:grid}
+.modal{width:min(430px,100%);border:2px solid var(--ink);border-radius:14px;
+  background:var(--card);box-shadow:var(--shadow);padding:18px}
+.modal h3{font-family:var(--display);font-size:1.05rem;margin-bottom:8px}
+.modal p{font-size:.9rem;margin-bottom:16px}
+.modalActions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+.danger{background:var(--coral-soft)}
+.danger:hover{background:var(--coral);color:#fff}
 </style>
 </head>
 <body>
@@ -130,10 +140,21 @@ h2{font-family:var(--display);font-weight:700;font-size:1.05rem;margin-bottom:12
 <div class="hint">Click a port to open <code>localhost:&lt;port&gt;</code> in a new tab. <b>Kill</b> stops a project's server (project ports only — system/macOS apps are protected). Only your own processes are shown (no sudo).</div>
 </div>
 <div id="toast"></div>
+<div id="killModal" class="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="killTitle">
+  <div class="modal">
+    <h3 id="killTitle">Kill server?</h3>
+    <p id="killText"></p>
+    <div class="modalActions">
+      <button id="killNo" class="btn">No</button>
+      <button id="killYes" class="btn danger">Yes, kill</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const $=s=>document.querySelector(s);
 let hideSystem=true, timer=null;   // default: show only project servers
+let pendingKill=null;
 
 function esc(s){return (s??'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function fmtUptime(s){
@@ -161,9 +182,10 @@ function render(data){
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg></a>`).join('');
     const meta=[`PID ${s.pid}`, s.mem_mb!=null?`${s.mem_mb} MB`:null, s.uptime_s!=null?`up ${fmtUptime(s.uptime_s)}`:null]
       .filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join('');
-    // kill only for project servers, never the dashboard's own process
-    const kill=(s.project_like && !s.is_self)
-      ? `<button class="kill" data-pid="${s.pid}" data-app="${esc(s.app)}" data-ports="${s.ports.join(',')}" title="Stop this server">
+    // kill project servers; allow self only for Agent Deck's fixed port 7777
+    const canKill=(s.project_like && !s.is_self)||(s.is_self&&s.ports.includes(7777));
+    const kill=canKill
+      ? `<button class="kill" data-pid="${s.pid}" data-app="${esc(s.app)}" data-ports="${s.ports.join(',')}" data-self="${s.is_self?'1':'0'}" title="Stop this server">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>Kill</button>`
       : '';
     return `<div class="card ${cls}">
@@ -196,20 +218,45 @@ function syncFilterBtn(){
 $('#refreshBtn').onclick=scan;
 $('#filterBtn').onclick=()=>{ hideSystem=!hideSystem; syncFilterBtn(); scan(); };
 
-// kill (event delegation) — project servers only; confirm before firing
+function openKillModal(info){
+  pendingKill=info;
+  const portList=info.ports.split(',').map(p=>':'+p).join(', ');
+  $('#killTitle').textContent=info.self==='1'?'Kill Agent Deck?':'Kill server?';
+  $('#killText').textContent=`Kill ${info.app} (PID ${info.pid}) on ${portList}?`;
+  $('#killYes').textContent=info.self==='1'?'Yes, kill port 7777':'Yes, kill';
+  $('#killModal').classList.add('show');
+  $('#killNo').focus();
+}
+function closeKillModal(){
+  pendingKill=null;
+  $('#killModal').classList.remove('show');
+}
+
+// kill (event delegation) — server confirms again before firing
 $('#grid').addEventListener('click',async e=>{
   const b=e.target.closest('.kill'); if(!b)return;
-  const {pid,app,ports}=b.dataset;
+  openKillModal({...b.dataset,button:b});
+});
+$('#killNo').onclick=closeKillModal;
+$('#killModal').addEventListener('click',e=>{ if(e.target.id==='killModal')closeKillModal(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape')closeKillModal(); });
+$('#killYes').onclick=async()=>{
+  if(!pendingKill)return;
+  const {pid,app,ports,button}=pendingKill;
   const portList=ports.split(',').map(p=>':'+p).join(', ');
-  if(!confirm(`Kill ${app} (PID ${pid}) on ${portList}?\nThis stops the process.`))return;
-  b.disabled=true; b.lastChild.textContent=' Killing…';
+  closeKillModal();
+  button.disabled=true; button.lastChild.textContent=' Killing…';
   try{
-    const r=await fetch(`/api/ports/${pid}/kill`,{method:'POST'}).then(r=>r.json());
+    const r=await fetch(`/api/ports/${pid}/kill`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({confirm:true})
+    }).then(r=>r.json());
     if(r.ok)toast(`${r.how} ${app} — freed ${portList}`);
     else toast(`Couldn't kill ${app}: ${r.reason}`,true);
   }catch(err){ toast('Kill request failed',true); }
   scan();
-});
+};
 
 function loop(){ clearInterval(timer); timer=setInterval(()=>{ if(!document.hidden)scan(); },4000); }
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden)scan(); });

@@ -18,13 +18,15 @@ import json
 import os
 import re
 import shlex
+import signal
 import sqlite3
 import subprocess
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 PORT = 7777
@@ -533,6 +535,8 @@ def describe_action(agent, p):
     if agent == "claude-code":
         tool = p.get("tool_name", "tool")
         ti = p.get("tool_input") or {}
+        if is_claude_question_tool(tool):
+            return tool, claude_question_summary(ti)
         target = ti.get("file_path") or ti.get("command") or ti.get("pattern") or ""
         return tool, f"{tool} {txt(target, 160)}".strip()
     if agent == "cursor":
@@ -541,6 +545,20 @@ def describe_action(agent, p):
     return "action", "Pending action"
 
 GATE_MODES = ("off", "auto", "all")
+
+CLAUDE_QUESTION_TOOLS = {"AskUserQuestion"}
+
+def is_claude_question_tool(tool):
+    return tool in CLAUDE_QUESTION_TOOLS
+
+def claude_question_summary(tool_input):
+    ti = tool_input or {}
+    q = (ti.get("question") or ti.get("prompt") or ti.get("message")
+         or ti.get("description") or "")
+    if isinstance(q, (list, dict)):
+        q = txt(q, 140)
+    q = txt(str(q).strip(), 140)
+    return f"Claude asks: {q}" if q else "Claude needs your yes/no decision"
 
 def effective_gate_mode(sid, agent):
     """auto is the default for claude-code (mirror its own approvals); other
@@ -689,6 +707,11 @@ async def do_gate(agent, p):
     sid = gate_sid(agent, p)
     tool, summary = describe_action(agent, p)
     cwd = p.get("cwd") or (p.get("workspace_roots") or [None])[0]
+    if agent == "claude-code" and is_claude_question_tool(tool):
+        upsert_session(sid, agent, cwd=cwd, status="waiting_input", task=summary)
+        add_event(sid, "waiting_input", summary)
+        await hub.broadcast()
+        return {"gate": False}
     mode = effective_gate_mode(sid, agent)
     if mode == "all":
         hold = True
@@ -722,10 +745,11 @@ async def do_gate(agent, p):
             c.execute("UPDATE decisions SET status='expired', decided_at=? "
                       "WHERE id=? AND status='pending'", (time.time(), did))
         pending.pop(did, None)
-        with db() as c:
-            c.execute("UPDATE sessions SET status='working' WHERE session_id=?",
-                      (sid,))
-        add_event(sid, "status_change", "Decision timed out, agent proceeded")
+        # No hook decision means Claude Code falls back to its native terminal
+        # prompt. Keep the card waiting so the user is notified to choose there.
+        upsert_session(sid, agent, cwd=cwd, status="waiting_input")
+        add_event(sid, "waiting_input",
+                  "Decision timed out, choose in the terminal")
         await hub.broadcast()
         return {"gate": True, "decision": "timeout"}
     pending.pop(did, None)
@@ -906,6 +930,12 @@ def claude_line(path, obj):
         for b in msg.get("content") or []:
             if isinstance(b, dict) and b.get("type") == "tool_use":
                 ti = b.get("input") or {}
+                if is_claude_question_tool(b.get("name")):
+                    summary = claude_question_summary(ti)
+                    upsert_session(sid, "claude-code", cwd=cwd, model=model,
+                                   status="waiting_input", task=summary)
+                    add_event(sid, "waiting_input", summary)
+                    continue
                 target = ti.get("file_path") or ti.get("command") or ""
                 add_event(sid, "tool_use",
                           f"{b.get('name','tool')} {txt(target,120)}".strip())
@@ -1225,14 +1255,26 @@ def api_ports():
     # never stalls the event loop. Scanned on demand (page polls while visible).
     return scan_ports()
 
+def schedule_self_terminate(pid):
+    def stop():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+    threading.Timer(0.25, stop).start()
+
 @app.post("/api/ports/{pid}/kill")
-def api_kill_port(pid: int):
-    """Kill a localhost server. Guarded three ways: never our own server; only a
-    process currently shown on the ports page; and only project-owned listeners
-    (never a macOS/GUI system process). Re-scans at kill time so a recycled PID
-    can't be hit. SIGTERM first, escalate to SIGKILL if it doesn't exit."""
+def api_kill_port(pid: int, payload: dict = Body(default=None)):
+    """Kill a localhost server. Guarded by live listener re-scan and project
+    ownership. The dashboard's own PID is allowed only with explicit
+    confirmation and is terminated after the response is sent."""
     if pid == os.getpid():
-        return JSONResponse({"ok": False, "reason": "self"}, status_code=400)
+        if not (payload or {}).get("confirm"):
+            return JSONResponse({"ok": False, "reason": "confirm_required"},
+                                status_code=400)
+        schedule_self_terminate(pid)
+        return {"ok": True, "how": "scheduled", "pid": pid,
+                "app": "Agent Deck", "project": HERE.name, "ports": [PORT]}
     target = next((s for s in scan_ports()["servers"] if s["pid"] == pid), None)
     if not target:
         return JSONResponse({"ok": False, "reason": "not_listening"}, status_code=404)

@@ -316,6 +316,7 @@ h2 .dot{width:10px;height:10px;border-radius:99px;border:2px solid var(--ink)}
 const $=s=>document.querySelector(s);
 let state=null, muted=localStorage.getItem('amc_muted')==='1';
 let agentSel=new Set(), statusSel=new Set(['active']), prevStatus={};
+const FIRST_SEEN_NOTIFY_WINDOW=120;
 
 /* Lucide icons (lucide.dev, ISC) inlined so everything stays offline */
 const icon=p=>`<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
@@ -546,7 +547,9 @@ function render(){
   /* notifications on transitions */
   for(const s of S){
     const prev=prevStatus[s.session_id];
-    if(prev&&prev!==s.status&&['waiting_input','error'].includes(s.status))
+    const alertable=['waiting_input','error'].includes(s.status);
+    const recentFirstSeen=!prev&&alertable&&(now-s.last_seen_at)<=FIRST_SEEN_NOTIFY_WINDOW;
+    if((prev&&prev!==s.status&&alertable)||recentFirstSeen)
       notify(s);
     prevStatus[s.session_id]=s.status;
   }

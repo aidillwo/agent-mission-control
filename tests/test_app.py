@@ -90,6 +90,41 @@ def test_claude_notification_sets_waiting(fresh_db):
     assert row["status"] == "waiting_input"
 
 
+def test_claude_question_tool_sets_waiting_from_gate(fresh_db):
+    amc.hub.clients.clear()
+    res = run(amc.do_gate("claude-code", {
+        "session_id": "cc-question",
+        "cwd": "/x/project",
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"question": "Proceed with this approach?"}}))
+    assert res == {"gate": False}
+    with amc.db() as c:
+        row = c.execute("SELECT status,current_task FROM sessions "
+                        "WHERE session_id='cc-question'").fetchone()
+        ev = c.execute("SELECT kind,summary FROM events "
+                       "WHERE session_id='cc-question'").fetchone()
+    assert row["status"] == "waiting_input"
+    assert row["current_task"] == "Claude asks: Proceed with this approach?"
+    assert ev["kind"] == "waiting_input"
+
+
+def test_claude_question_tool_sets_waiting_from_tailer(fresh_db):
+    amc.claude_line("/fake/question.jsonl",
+                    {"sessionId": "cc-tail-question", "type": "assistant",
+                     "message": {"id": "m-question", "model": "claude-opus-4-8",
+                                 "content": [{"type": "tool_use",
+                                              "name": "AskUserQuestion",
+                                              "input": {"question": "Use option A?"}}]}})
+    with amc.db() as c:
+        row = c.execute("SELECT status,current_task FROM sessions "
+                        "WHERE session_id='cc-tail-question'").fetchone()
+        ev = c.execute("SELECT kind,summary FROM events "
+                       "WHERE session_id='cc-tail-question'").fetchone()
+    assert row["status"] == "waiting_input"
+    assert row["current_task"] == "Claude asks: Use option A?"
+    assert ev["kind"] == "waiting_input"
+
+
 def test_generic_completed_maps_to_ended(fresh_db):
     run(amc.handle_generic({"agent": "custom", "session_id": "g1",
                             "status": "working", "task": "do stuff"}))
@@ -273,7 +308,7 @@ def test_gate_timeout(fresh_db, monkeypatch):
         st = c.execute("SELECT status FROM decisions WHERE session_id='g2'").fetchone()["status"]
         sess = c.execute("SELECT status FROM sessions WHERE session_id='g2'").fetchone()["status"]
     assert st == "expired"
-    assert sess == "working"
+    assert sess == "waiting_input"
 
 
 def test_decision_not_found_and_double_decide(fresh_db):
@@ -463,7 +498,19 @@ def test_ports_page_and_api(client):
 
 def test_kill_port_refuses_self(client):
     r = client.post(f"/api/ports/{os.getpid()}/kill")
-    assert r.status_code == 400 and r.json()["reason"] == "self"
+    assert r.status_code == 400 and r.json()["reason"] == "confirm_required"
+
+
+def test_kill_port_allows_confirmed_self(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(amc, "schedule_self_terminate",
+                        lambda pid: called.append(pid))
+    r = client.post(f"/api/ports/{os.getpid()}/kill", json={"confirm": True})
+    body = r.json()
+    assert r.status_code == 200
+    assert body["ok"] is True
+    assert body["how"] == "scheduled"
+    assert called == [os.getpid()]
 
 
 def test_kill_port_refuses_system(client, monkeypatch):
